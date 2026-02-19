@@ -1,9 +1,9 @@
-/// Windows COM Thumbnail Provider for Readest
+/// Windows COM Thumbnail Provider for Inkline
 ///
 /// Implements IThumbnailProvider and IInitializeWithItem for Windows Shell integration.
 /// This allows Windows Explorer to show book covers as thumbnails for eBook files.
 ///
-/// **Important**: Thumbnails are only shown when Readest.exe is the default application
+/// **Important**: Thumbnails are only shown when Inkline.exe is the default application
 /// for the file type.
 ///
 /// ## CLSID: {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -36,7 +36,7 @@ use windows_core::{implement, Ref};
 use super::cached_thumbnail_for_path;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CLSID for Readest Thumbnail Provider
+// CLSID for Inkline Thumbnail Provider
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// CLSID: {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -75,7 +75,7 @@ fn get_dll_module() -> Option<HMODULE> {
 // File Association Check
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Check if Readest.exe is the default application for a given file extension.
+/// Check if Inkline.exe is the default application for a given file extension.
 fn is_readest_default_for_extension(ext: &str) -> bool {
     let ext_wide: Vec<u16> = ext.encode_utf16().chain(std::iter::once(0)).collect();
     let mut buffer = [0u16; 260];
@@ -101,7 +101,7 @@ fn is_readest_default_for_extension(ext: &str) -> bool {
     false
 }
 
-/// Check if Readest is the default app for a specific file path.
+/// Check if Inkline is the default app for a specific file path.
 fn is_readest_default_for_file(path: &PathBuf) -> bool {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         let ext_with_dot = format!(".{}", ext.to_lowercase());
@@ -456,7 +456,7 @@ unsafe fn register_server_impl() -> Result<(), HRESULT> {
 
     // CLSID key
     let clsid_key = create_reg_key(HKEY_CLASSES_ROOT, &format!("CLSID\\{}", clsid))?;
-    set_reg_value(clsid_key, "", "Readest Thumbnail Provider")?;
+    set_reg_value(clsid_key, "", "Inkline Thumbnail Provider")?;
 
     // CRITICAL: DisableProcessIsolation = 1
     let disable_isolation_name = to_wide("DisableProcessIsolation");

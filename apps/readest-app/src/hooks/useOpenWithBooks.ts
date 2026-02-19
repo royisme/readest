@@ -105,10 +105,10 @@ export function useOpenWithBooks() {
       },
     );
 
-    // For Android "Share to Readest" intent
+    // For Android "Share to Inkline" intent
     let unlistenSharedIntent: Promise<PluginListener> | null = null;
     // FIXME: register/unregister plugin listeniner on iOS might cause app freeze for unknown reason
-    // so we only register it on Android for now to support "Shared to Readest" feature
+    // so we only register it on Android for now to support "Shared to Inkline" feature
     if (appService?.isAndroidApp) {
       unlistenSharedIntent = initializeListeners();
     }

@@ -370,7 +370,7 @@ pub fn run() {
                     .decorations(false)
                     .visible(false)
                     .shadow(true)
-                    .title("Readest");
+                    .title("Inkline");
 
                 #[cfg(target_os = "windows")]
                 {

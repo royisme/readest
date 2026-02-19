@@ -90,8 +90,8 @@
         "Sync: Improved file downloading by correctly handling special characters in filenames",
         "UI: Added an option to temporarily dismiss the reading progress bar",
         "Settings: Screen brightness adjustments now apply only to the reader view",
-        "iOS: You can now open files directly in Readest from the Files app",
-        "macOS: Added a global menu option to open files with Readest"
+        "iOS: You can now open files directly in Inkline from the Files app",
+        "macOS: Added a global menu option to open files with Inkline"
       ]
     },
     "0.9.95": {
@@ -152,7 +152,7 @@
         "E-Ink: Enhanced readability on the library page for E-Ink devices",
         "UI: Storage capacity is now displayed with precise values in the user profile",
         "Reader: You can now import files directly into the currently selected book group",
-        "Account: You can now update the email address linked to your Readest account",
+        "Account: You can now update the email address linked to your Inkline account",
         "Footnotes: Added compatibility for more footnote formats"
       ]
     },
@@ -211,7 +211,7 @@
       "notes": [
         "Reader: Added support for per-book background image customization",
         "Reader: Added option to override book language metadata for improved hyphenation accuracy",
-        "Sync: Readest sync in KOReader can now be triggered using gesture controls",
+        "Sync: Inkline sync in KOReader can now be triggered using gesture controls",
         "Sync: Fixed a crash in KOReader that occurred when syncing progress without an open book",
         "Sync: Improved upload performance with concurrent upload support"
       ]
@@ -232,7 +232,7 @@
     "0.9.82": {
       "date": "2025-10-01",
       "notes": [
-        "Sync: More reliable syncing between KOReader and Readest",
+        "Sync: More reliable syncing between KOReader and Inkline",
         "MOBI: Fixed an issue where some footnotes in MOBI/AZW files were not parsed correctly",
         "Storage: Added support for changing data location on Windows, macOS, Linux, and Android",
         "Windows: Portable EXE version now stores all reading data in the directory of the executable",
@@ -271,7 +271,7 @@
         "TTS: Added previous/next sentence navigation controls in the TTS bar",
         "TTS: Added media control support on iOS lock screen and AirPods",
         "TTS: Fixed an issue where headings could not be highlighted for TTS",
-        "Sync: Fixed occasional sync failures between KOReader and Readest",
+        "Sync: Fixed occasional sync failures between KOReader and Inkline",
         "Fonts: Grouped font styles into custom font families for easier selection",
         "Reader: Improved text selection sensitivity when using a stylus",
         "Reader: Books can now be properly closed using the system back button on Android",
@@ -421,7 +421,7 @@
     "0.9.62": {
       "date": "2025-07-02",
       "notes": [
-        "Subscription: You can now upgrade to Readest Premium and manage your subscription",
+        "Subscription: You can now upgrade to Inkline Premium and manage your subscription",
         "Reader: Added an option to toggle Parallel Reading when viewing multiple books",
         "Translation: Added an option to show or hide the original text in translations",
         "Layout: TOC on Android now uses an overlay scrollbar for easier navigation",
@@ -440,7 +440,7 @@
         "Settings: Added options to reset settings from the config dialog",
         "Import: Fixed encoded filenames when importing TXT files on iOS",
         "Linux: Fixed missing app icon on some Linux distributions",
-        "GitHub: Added donation link to support Readest development"
+        "GitHub: Added donation link to support Inkline development"
       ]
     },
     "0.9.60": {
@@ -636,7 +636,7 @@
       "date": "2025-04-20",
       "notes": [
         "📥 New download and upload buttons in the book detail dialog for easier file management",
-        "📂 You can now open files directly in Readest from your file manager on Android and iOS",
+        "📂 You can now open files directly in Inkline from your file manager on Android and iOS",
         "🛠️ Fixed an issue where files with quotation marks in the filename could not be opened",
         "📖 Improved the immersive reading experience on the reader page for Android and iOS",
         "🌐 Added GuanKiapTsingKhai-T to the list of available CJK fonts"
@@ -946,7 +946,7 @@
     "0.8.2": {
       "date": "2024-12-06",
       "notes": [
-        "Support file associations for one-click open with Readest.",
+        "Support file associations for one-click open with Inkline.",
         "Support APP auto updater.",
         "Support online web version."
       ]

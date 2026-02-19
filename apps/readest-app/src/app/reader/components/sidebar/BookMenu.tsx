@@ -53,11 +53,11 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen })
     window.location.reload();
     setIsDropdownOpen?.(false);
   };
-  const showAboutReadest = () => {
+  const showAboutInkline = () => {
     setAboutDialogVisible(true);
     setIsDropdownOpen?.(false);
   };
-  const downloadReadest = () => {
+  const downloadInkline = () => {
     window.open(DOWNLOAD_READEST_URL, '_blank');
     setIsDropdownOpen?.(false);
   };
@@ -189,8 +189,8 @@ const BookMenu: React.FC<BookMenuProps> = ({ menuClassName, setIsDropdownOpen })
       />
       <MenuItem label={_('Reload Page')} shortcut='Shift+R' onClick={handleReloadPage} />
       <hr aria-hidden='true' className='border-base-200 my-1' />
-      {isWebAppPlatform() && <MenuItem label={_('Download Readest')} onClick={downloadReadest} />}
-      <MenuItem label={_('About Readest')} onClick={showAboutReadest} />
+      {isWebAppPlatform() && <MenuItem label={_('Download Inkline')} onClick={downloadInkline} />}
+      <MenuItem label={_('About Inkline')} onClick={showAboutInkline} />
     </Menu>
   );
 };

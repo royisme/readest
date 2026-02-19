@@ -47,3 +47,4 @@ fastlane/report.xml
 result*
 .playwright-mcp/
 .serena/
+.works/

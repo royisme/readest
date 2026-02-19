@@ -18,7 +18,7 @@
       "identifier": "fs:scope-appdata-recursive",
       "allow": [
         {
-          "path": "$APPDATA/Readest/**/*"
+          "path": "$APPDATA/Inkline/**/*"
         }
       ],
       "deny": []
@@ -65,10 +65,10 @@
       "identifier": "fs:scope",
       "allow": [
         {
-          "path": "**/Readest"
+          "path": "**/Inkline"
         },
         {
-          "path": "**/Readest/**/*"
+          "path": "**/Inkline/**/*"
         },
         {
           "path": "**/last-book-cover.png"
@@ -158,17 +158,17 @@
         {
           "name": "start-readest",
           "cmd": "cmd",
-          "args": ["/C", "start", "", { "validator": "^.*Readest(.*)\\.exe$" }]
+          "args": ["/C", "start", "", { "validator": "^.*Inkline(.*)\\.exe$" }]
         },
         {
           "name": "chmod-appimage",
           "cmd": "chmod",
-          "args": ["+x", { "validator": "^.*Readest(.*)\\.AppImage$" }]
+          "args": ["+x", { "validator": "^.*Inkline(.*)\\.AppImage$" }]
         },
         {
           "name": "launch-appimage",
           "cmd": "setsid",
-          "args": [{ "validator": "^.*Readest(.*)\\.AppImage$" }]
+          "args": [{ "validator": "^.*Inkline(.*)\\.AppImage$" }]
         }
       ]
     },

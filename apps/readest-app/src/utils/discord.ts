@@ -24,7 +24,7 @@ type BookPresence = {
  * Get an HTTPS cover URL suitable for Discord Rich Presence
  * - Caches successful uploads for session
  * - Caches failures (undefined) for 1 hour to avoid retries
- * - Processes cover with Readest icon overlay
+ * - Processes cover with Inkline icon overlay
  */
 const getCoverUrlForDiscord = async (
   book: Book,

@@ -27,7 +27,7 @@ import { getDefaultMaxBlockSize, getDefaultMaxInlineSize } from '@/utils/config'
 import { stubTranslation as _ } from '@/utils/misc';
 import { DEFAULT_AI_SETTINGS } from './ai/constants';
 
-export const DATA_SUBDIR = 'Readest';
+export const DATA_SUBDIR = 'Inkline';
 export const LOCAL_BOOKS_SUBDIR = `${DATA_SUBDIR}/Books`;
 export const CLOUD_BOOKS_SUBDIR = `${DATA_SUBDIR}/Books`;
 export const LOCAL_FONTS_SUBDIR = `${DATA_SUBDIR}/Fonts`;
@@ -689,7 +689,7 @@ export const READEST_CHANGELOG_FILE = `${LATEST_DOWNLOAD_BASE_URL}/release-notes
 
 export const READEST_PUBLIC_STORAGE_BASE_URL = 'https://storage.readest.com';
 
-export const READEST_OPDS_USER_AGENT = 'Readest/1.0 (OPDS Browser)';
+export const READEST_OPDS_USER_AGENT = 'Inkline/1.0 (OPDS Browser)';
 
 export const SYNC_PROGRESS_INTERVAL_SEC = 3;
 export const SYNC_NOTES_INTERVAL_SEC = 5;

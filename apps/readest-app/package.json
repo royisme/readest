@@ -14,7 +14,7 @@
     "lint": "eslint .",
     "test": "dotenv -e .env -e .env.test.local vitest",
     "tauri": "tauri",
-    "clippy": "cargo clippy -p Readest --no-deps -- -D warnings",
+    "clippy": "cargo clippy -p Inkline --no-deps -- -D warnings",
     "format": "pnpm -w format",
     "format:check": "pnpm -w format:check",
     "prepare-public-vendor": "mkdirp ./public/vendor/pdfjs ./public/vendor/simplecc",

@@ -16,7 +16,7 @@ const createReaderWindow = (appService: AppService, url: string) => {
     height: 600,
     center: true,
     resizable: true,
-    title: appService.isMacOSApp ? '' : 'Readest',
+    title: appService.isMacOSApp ? '' : 'Inkline',
     decorations: appService.isMacOSApp ? true : false,
     transparent: appService.isMacOSApp ? false : true,
     shadow: appService.isMacOSApp ? undefined : true,
