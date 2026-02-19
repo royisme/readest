@@ -77,7 +77,7 @@ import {
 } from '@/libs/storage';
 import { ClosableFile } from '@/utils/file';
 import { ProgressHandler } from '@/utils/transfer';
-import { TxtToEpubConverter } from '@/utils/txt';
+import { convertTxtToEpubWithFallback } from '@/utils/txt-worker';
 import { BOOK_FILE_NOT_FOUND_ERROR } from './errors';
 import { CustomTextureInfo } from '@/styles/textures';
 import { CustomFont, CustomFontInfo } from '@/styles/fonts';
@@ -372,8 +372,7 @@ export abstract class BaseAppService implements AppService {
           filename = file.name;
         }
         if (/\.txt$/i.test(filename)) {
-          const txt2epub = new TxtToEpubConverter();
-          ({ file: fileobj } = await txt2epub.convert({ file: fileobj }));
+          ({ file: fileobj } = await convertTxtToEpubWithFallback({ file: fileobj }));
         }
         if (!fileobj || fileobj.size === 0) {
           throw new Error('Invalid or empty book file');

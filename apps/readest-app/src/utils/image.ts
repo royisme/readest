@@ -1,7 +1,7 @@
 /**
  * Process book cover for Discord Rich Presence:
  * - Fit to 512x512 with transparent background
- * - Add Readest icon overlay at bottom right (10px padding)
+ * - Add Inkline icon overlay at bottom right (10px padding)
  * - Return as JPEG blob
  */
 export async function processDiscordCover(coverUrl: string, iconUrl: string): Promise<Blob> {

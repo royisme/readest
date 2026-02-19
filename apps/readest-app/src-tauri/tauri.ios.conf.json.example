@@ -1,0 +1,8 @@
+{
+  "identifier": "com.yourname.inkline",
+  "bundle": {
+    "iOS": {
+      "developmentTeam": "YOUR_APPLE_TEAM_ID"
+    }
+  }
+}

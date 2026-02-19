@@ -1,14 +1,14 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Readest",
-  "mainBinaryName": "readest",
-  "identifier": "com.bilingify.readest",
+  "productName": "Inkline",
+  "mainBinaryName": "inkline",
+  "identifier": "com.royzhu.inkline",
   "version": "../package.json",
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build"
+    "beforeDevCommand": "pnpm sync-ios-icons && pnpm dev",
+    "beforeBuildCommand": "pnpm sync-ios-icons && pnpm build"
   },
   "app": {
     "windows": [],
@@ -30,7 +30,7 @@
             "$APPDATA/**/*",
             "$APPCACHE/**/*",
             "$TEMP/**/*",
-            "**/Readest/**/*",
+            "**/Inkline/**/*",
             "/private/var/mobile/Containers/Data/Application/**/*"
           ],
           "deny": []
@@ -71,7 +71,6 @@
       "minSdkVersion": 26
     },
     "iOS": {
-      "developmentTeam": "J5W48D69VR",
       "infoPlist": "./Info-ios.plist",
       "minimumSystemVersion": "15.0"
     },
@@ -133,7 +132,7 @@
       "requireLiteralLeadingDot": false
     },
     "cli": {
-      "description": "Readest CLI",
+      "description": "Inkline CLI",
       "args": [
         {
           "name": "file1",
@@ -160,7 +159,7 @@
     "deep-link": {
       "mobile": [{ "host": "web.readest.com" }],
       "desktop": {
-        "schemes": ["readest"]
+        "schemes": ["inkline"]
       }
     },
     "updater": {

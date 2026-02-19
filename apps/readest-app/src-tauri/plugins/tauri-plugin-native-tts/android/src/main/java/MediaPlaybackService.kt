@@ -78,7 +78,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
 
         player = ExoPlayer.Builder(this).build()
 
-        mediaSession = MediaSessionCompat(baseContext, "ReadestMediaSession").apply {
+        mediaSession = MediaSessionCompat(baseContext, "InklineMediaSession").apply {
             stateBuilder = PlaybackStateCompat.Builder().setActions(
                 PlaybackStateCompat.ACTION_PLAY or
                 PlaybackStateCompat.ACTION_PLAY_PAUSE or

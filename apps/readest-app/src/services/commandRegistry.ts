@@ -618,12 +618,12 @@ const actionItems = [
   },
   {
     id: 'action.about',
-    labelKey: _('About Readest'),
+    labelKey: _('About Inkline'),
     keywords: ['about', 'readest', 'version', 'info'],
   },
   {
     id: 'action.telemetry',
-    labelKey: _('Help improve Readest'),
+    labelKey: _('Help improve Inkline'),
     keywords: ['telemetry', 'analytics', 'improve', 'statistics'],
   },
 ];

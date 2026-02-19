@@ -1,6 +1,6 @@
 /**
  * Converter between EPUB CFI and CREngine XPointer
- * Converts between Readest (foliate-js) CFI format and KOReader CREngine XPointer format
+ * Converts between Inkline (foliate-js) CFI format and KOReader CREngine XPointer format
  */
 
 import { BookDoc } from '@/libs/document';

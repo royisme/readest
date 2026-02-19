@@ -1,7 +1,7 @@
-# Readest 架构分析文档
+# Inkline 架构分析文档
 
 > **创建日期**: 2025-02-17
-> **目的**: 记录 Readest 阅读器的核心架构，便于后续开发和维护
+> **目的**: 记录 Inkline 阅读器的核心架构，便于后续开发和维护
 
 ---
 
@@ -140,7 +140,7 @@ view.renderer.setStyles?.(getStyles(viewSettings));
 
 ### 2.4 内容转换管道
 
-在内容渲染前，Readest 应用一系列转换器处理内容：
+在内容渲染前，Inkline 应用一系列转换器处理内容：
 
 ```typescript
 // FoliateViewer.tsx:154-165

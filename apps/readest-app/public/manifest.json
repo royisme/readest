@@ -1,25 +1,34 @@
 {
-  "name": "Readest",
-  "short_name": "Readest",
+  "name": "Inkline",
+  "short_name": "Inkline",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "description": "Readest is an open-source eBook reader supporting EPUB, PDF, and sync across devices.",
+  "description": "Inkline is an open-source eBook reader supporting EPUB, PDF, and sync across devices.",
   "icons": [
     {
-      "src": "/icon.png",
+      "src": "/icon-192.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "192x192",
+      "purpose": "any"
     },
     {
-      "src": "/icon.png",
+      "src": "/icon-512.png",
       "type": "image/png",
-      "sizes": "256x256"
+      "sizes": "512x512",
+      "purpose": "any"
     },
     {
-      "src": "/icon.png",
+      "src": "/icon-192-maskable.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "192x192",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512-maskable.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
     }
   ],
   "splash_pages": null

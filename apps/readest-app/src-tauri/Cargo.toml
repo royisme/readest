@@ -1,5 +1,5 @@
 [package]
-name = "Readest"
+name = "Inkline"
 version = "0.2.2"
 description = "Your online library"
 authors = ["Bilingify LLC"]
@@ -17,6 +17,8 @@ crate-type = ["staticlib", "cdylib", "lib"]
 [features]
 # Internal feature to suppress warnings from old objc crate
 cargo-clippy = []
+# Ensures iOS builds from Xcode can load bundled frontend assets instead of devUrl.
+custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -74,12 +74,12 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
     setIsDropdownOpen?.(false);
   };
 
-  const showAboutReadest = () => {
+  const showAboutInkline = () => {
     setAboutDialogVisible(true);
     setIsDropdownOpen?.(false);
   };
 
-  const downloadReadest = () => {
+  const downloadInkline = () => {
     window.open(DOWNLOAD_READEST_URL, '_blank');
     setIsDropdownOpen?.(false);
   };
@@ -398,12 +398,12 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
       )}
       <hr aria-hidden='true' className='border-base-200 my-1' />
       {user && userProfilePlan === 'free' && (
-        <MenuItem label={_('Upgrade to Readest Premium')} onClick={handleUpgrade} />
+        <MenuItem label={_('Upgrade to Inkline Premium')} onClick={handleUpgrade} />
       )}
-      {isWebAppPlatform() && <MenuItem label={_('Download Readest')} onClick={downloadReadest} />}
-      <MenuItem label={_('About Readest')} onClick={showAboutReadest} />
+      {isWebAppPlatform() && <MenuItem label={_('Download Inkline')} onClick={downloadInkline} />}
+      <MenuItem label={_('About Inkline')} onClick={showAboutInkline} />
       <MenuItem
-        label={_('Help improve Readest')}
+        label={_('Help improve Inkline')}
         description={isTelemetryEnabled ? _('Sharing anonymized statistics') : ''}
         toggled={isTelemetryEnabled}
         onClick={toggleTelemetry}
