@@ -4,8 +4,10 @@
   "repository": "readest/readest",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+    "prepare": "husky",
     "tauri": "pnpm --filter @readest/readest-app tauri",
     "dev-web": "pnpm --filter @readest/readest-app dev-web",
+    "ci:local": "scripts/ci-local.sh",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,css,json,md,html,yml}\"",
     "format:check": "prettier --check \"**/*.{js,jsx,ts,tsx,css,json,md,html,yml}\""
   },
