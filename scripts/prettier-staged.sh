@@ -1,11 +1,11 @@
-#!/bin/sh
+#!/usr/bin/env sh
 set -eu
 
-staged_files="$(git diff --cached --name-only --diff-filter=ACMR | rg -N '\.(js|jsx|ts|tsx|css|json|md|html|yml)$' || true)"
+STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(js|jsx|ts|tsx|css|json|md|html|yml)$' || true)"
 
-if [ -z "$staged_files" ]; then
+if [ -z "$STAGED_FILES" ]; then
   exit 0
 fi
 
-echo "$staged_files" | xargs pnpm prettier --write
-echo "$staged_files" | xargs git add
+echo "$STAGED_FILES" | xargs pnpm exec prettier --write
+echo "$STAGED_FILES" | xargs git add
