@@ -10,6 +10,7 @@
     "build-web": "dotenv -e .env.web -- next build",
     "start-web": "dotenv -e .env.web -- next start",
     "build-tauri": "dotenv -e .env.tauri -- next build",
+    "sync-ios-icons": "bash ./scripts/sync-ios-icons.sh",
     "i18n:extract": "i18next-scanner",
     "lint": "eslint .",
     "test": "dotenv -e .env -e .env.test.local vitest",

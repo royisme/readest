@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 
 import { TxtToEpubConverter } from '@/utils/txt';
 
@@ -35,10 +37,11 @@ type TxtConverterFlowPrivateAPI = TxtConverterPrivateAPI & {
     metadata: TestMetadata,
     option: { linesBetweenSegments: number; fallbackParagraphsPerChapter: number },
   ): number;
-  iterateSegmentsFromTextChunks(
-    chunks: Iterable<string>,
+  iterateSegmentsFromFile(
+    file: File,
+    encoding: string,
     linesBetweenSegments: number,
-  ): Generator<string>;
+  ): AsyncGenerator<string>;
   detectEncodingFromFile(file: File): Promise<string | undefined>;
   extractChaptersFromFileBySegments(
     file: File,
@@ -150,6 +153,14 @@ describe('TxtToEpubConverter', () => {
     expect(decodeSizes).not.toContain(fullSize);
   });
 
+  it('detectEncoding should keep utf-8 when sample boundaries split multibyte chars', () => {
+    const converter = new TxtToEpubConverter() as unknown as TxtConverterPrivateAPI;
+    const text = `开头\n${'汉字'.repeat(60000)}\n结尾`;
+    const buffer = new TextEncoder().encode(text).buffer;
+
+    expect(converter.detectEncoding(buffer)).toBe('utf-8');
+  });
+
   it('createEpub should use metadata language for chapter lang attributes', async () => {
     const converter = new TxtToEpubConverter() as unknown as TxtConverterPrivateAPI;
     const chapters: TestChapter[] = [
@@ -181,13 +192,24 @@ describe('TxtToEpubConverter', () => {
     }
   });
 
-  it('iterateSegmentsFromTextChunks should split by 8 newlines across chunk boundaries', () => {
+  it('iterateSegmentsFromFile should split by 8 newlines across chunk boundaries', async () => {
     const converter = new TxtToEpubConverter() as unknown as TxtConverterFlowPrivateAPI;
-    const chunks = ['Segment A\n\n\n\n', '\n\n\n\nSegment B'];
+    const CHUNK_SIZE = 512 * 1024;
+    const head = `Segment A${'x'.repeat(CHUNK_SIZE - 'Segment A'.length - 4)}`;
+    const content = new Blob([`${head}\n\n\n\n\n\n\n\nSegment B`]);
+    const file = {
+      size: content.size,
+      slice: (start?: number, end?: number) => content.slice(start, end),
+    } as unknown as File;
 
-    const segments = Array.from(converter.iterateSegmentsFromTextChunks(chunks, 8));
+    const segments: string[] = [];
+    for await (const segment of converter.iterateSegmentsFromFile(file, 'utf-8', 8)) {
+      segments.push(segment);
+    }
 
-    expect(segments).toEqual(['Segment A', 'Segment B']);
+    expect(segments).toHaveLength(2);
+    expect(segments[0]?.startsWith('Segment A')).toBe(true);
+    expect(segments[1]).toBe('Segment B');
   });
 
   it('convert should use chunked path for large files without calling file.arrayBuffer', async () => {
@@ -258,7 +280,7 @@ describe('TxtToEpubConverter', () => {
     expect(result.chapterCount).toBe(2);
   });
 
-  it('iterateSegmentsFromFile should cancel stream on early return', async () => {
+  it('iterateSegmentsFromFile should stop cleanly on early return', async () => {
     const converter = new TxtToEpubConverter() as unknown as TxtConverterFlowPrivateAPI & {
       iterateSegmentsFromFile(
         file: File,
@@ -266,26 +288,70 @@ describe('TxtToEpubConverter', () => {
         linesBetweenSegments: number,
       ): AsyncGenerator<string>;
     };
-    const encoder = new TextEncoder();
-    let cancelled = false;
-
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(encoder.encode('Segment A\n\n\n\n\n\n\n\nSegment B'));
-      },
-      cancel() {
-        cancelled = true;
-      },
-    });
-
+    const content = new Blob(['Segment A\n\n\n\n\n\n\n\nSegment B']);
     const file = {
-      stream: () => stream,
+      size: content.size,
+      slice: (start?: number, end?: number) => content.slice(start, end),
     } as unknown as File;
 
     const iterator = converter.iterateSegmentsFromFile(file, 'utf-8', 8);
     const first = await iterator.next();
     expect(first.value).toBe('Segment A');
-    await iterator.return(undefined);
-    expect(cancelled).toBe(true);
+    const done = await iterator.return(undefined);
+    expect(done.done).toBe(true);
   });
+
+  it.runIf(Boolean(process.env.TXT_SAMPLE_PATH))(
+    'convert should handle real-world large UTF-8 TXT sample',
+    async () => {
+      const samplePath = process.env.TXT_SAMPLE_PATH!;
+      const buffer = await readFile(samplePath);
+      const bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+      const file = new File([bytes], basename(samplePath), { type: 'text/plain' });
+      const converter = new TxtToEpubConverter();
+
+      const result = await converter.convert({ file });
+
+      expect(result.chapterCount).toBeGreaterThan(0);
+      expect(result.file.name.toLowerCase().endsWith('.epub')).toBe(true);
+      expect(result.file.size).toBeGreaterThan(0);
+    },
+  );
+
+  it.runIf(Boolean(process.env.TXT_SAMPLE_PATH))(
+    'analyze chapter structure for real-world TXT sample',
+    async () => {
+      const samplePath = process.env.TXT_SAMPLE_PATH!;
+      const buffer = await readFile(samplePath);
+      const bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+      const file = new File([bytes], basename(samplePath), { type: 'text/plain' });
+      const converter = new TxtToEpubConverter();
+
+      const result = await converter.convert({ file });
+      const { ZipReader, BlobReader, TextWriter } = await import('@zip.js/zip.js');
+      const reader = new ZipReader(new BlobReader(result.file));
+      try {
+        const entries = await reader.getEntries();
+        const tocEntry = entries.find((entry) => entry.filename === 'toc.ncx');
+        expect(tocEntry).toBeDefined();
+        const toc = await tocEntry!.getData(new TextWriter());
+
+        const titleMatches = Array.from(toc.matchAll(/<navLabel><text>(.*?)<\/text><\/navLabel>/g));
+        const titles = titleMatches.map((m) => (m[1] || '').trim()).filter(Boolean);
+
+        const chapterEntries = entries.filter((entry) => /^OEBPS\/chapter\d+\.xhtml$/.test(entry.filename));
+        const emptyTitleCount = titles.filter((t) => t.length === 0).length;
+        const numberedTitleCount = titles.filter((t) => /^\d+$/.test(t)).length;
+
+        console.log(
+          `[txt-structure] sample=${basename(samplePath)} chapters=${titles.length} files=${chapterEntries.length} numbered_titles=${numberedTitleCount} empty_titles=${emptyTitleCount} first10=${titles.slice(0, 10).join(' | ')}`,
+        );
+
+        expect(titles.length).toBeGreaterThan(10);
+        expect(chapterEntries.length).toBe(titles.length);
+      } finally {
+        await reader.close();
+      }
+    },
+  );
 });

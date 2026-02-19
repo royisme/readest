@@ -27,7 +27,7 @@ interface ExtractChapterOptions {
   fallbackParagraphsPerChapter: number;
 }
 
-interface ConversionResult {
+export interface ConversionResult {
   file: File;
   bookTitle: string;
   chapterCount: number;
@@ -44,6 +44,7 @@ const HEADER_TEXT_MAX_CHARS = 1024;
 const HEADER_TEXT_MAX_BYTES = 128 * 1024;
 const ENCODING_HEAD_SAMPLE_BYTES = 64 * 1024;
 const ENCODING_MID_SAMPLE_BYTES = 8192;
+const LARGE_FILE_READ_CHUNK_BYTES = 512 * 1024;
 
 const escapeXml = (str: string) => {
   if (!str) return '';
@@ -68,8 +69,9 @@ export class TxtToEpubConverter {
 
     const fileContent = await txtFile.arrayBuffer();
     const detectedEncoding = this.detectEncoding(fileContent) || 'utf-8';
-    console.log(`Detected encoding: ${detectedEncoding}`);
-    const decoder = new TextDecoder(detectedEncoding);
+    const runtimeEncoding = this.resolveSupportedEncoding(detectedEncoding);
+    console.log(`Detected encoding: ${detectedEncoding}, runtime encoding: ${runtimeEncoding}`);
+    const decoder = new TextDecoder(runtimeEncoding);
     const txtContent = decoder.decode(fileContent).trim();
 
     const bookTitle = this.extractBookTitle(getBaseFilename(txtFile.name));
@@ -122,13 +124,14 @@ export class TxtToEpubConverter {
   private async convertLargeFile(options: Txt2EpubOptions): Promise<ConversionResult> {
     const { file: txtFile, author: providedAuthor, language: providedLanguage } = options;
     const detectedEncoding = (await this.detectEncodingFromFile(txtFile)) || 'utf-8';
-    console.log(`Detected encoding: ${detectedEncoding}`);
+    const runtimeEncoding = this.resolveSupportedEncoding(detectedEncoding);
+    console.log(`Detected encoding: ${detectedEncoding}, runtime encoding: ${runtimeEncoding}`);
 
     const bookTitle = this.extractBookTitle(getBaseFilename(txtFile.name));
     const fileName = `${bookTitle}.epub`;
     const fileHeader = await this.readHeaderTextFromFile(
       txtFile,
-      detectedEncoding,
+      runtimeEncoding,
       HEADER_TEXT_MAX_CHARS,
       HEADER_TEXT_MAX_BYTES,
     );
@@ -143,7 +146,7 @@ export class TxtToEpubConverter {
     const metadata = { bookTitle, author, language, identifier };
 
     const fallbackParagraphsPerChapter = 100;
-    let chapters = await this.extractChaptersFromFileBySegments(txtFile, detectedEncoding, metadata, {
+    let chapters = await this.extractChaptersFromFileBySegments(txtFile, runtimeEncoding, metadata, {
       linesBetweenSegments: 8,
       fallbackParagraphsPerChapter,
     });
@@ -155,14 +158,14 @@ export class TxtToEpubConverter {
     if (chapters.length <= 1) {
       const probeChapterCount = await this.probeChapterCountFromFileBySegments(
         txtFile,
-        detectedEncoding,
+        runtimeEncoding,
         metadata,
         {
           linesBetweenSegments: 7,
           fallbackParagraphsPerChapter,
         },
       );
-      chapters = await this.extractChaptersFromFileBySegments(txtFile, detectedEncoding, metadata, {
+      chapters = await this.extractChaptersFromFileBySegments(txtFile, runtimeEncoding, metadata, {
         linesBetweenSegments: probeChapterCount > 1 ? 7 : 6,
         fallbackParagraphsPerChapter,
       });
@@ -258,12 +261,12 @@ export class TxtToEpubConverter {
     const headSample = new Uint8Array(headBuffer);
 
     try {
-      new TextDecoder('utf-8', { fatal: true }).decode(headSample);
+      this.assertStrictUtf8Sample(headSample);
       if (file.size > headSampleSize * 2) {
         const midSampleSize = Math.min(ENCODING_MID_SAMPLE_BYTES, file.size - headSampleSize);
         const midSampleStart = Math.floor((file.size - midSampleSize) / 2);
         const midBuffer = await file.slice(midSampleStart, midSampleStart + midSampleSize).arrayBuffer();
-        new TextDecoder('utf-8', { fatal: true }).decode(midBuffer);
+        this.assertStrictUtf8Sample(new Uint8Array(midBuffer));
       }
       return 'utf-8';
     } catch {
@@ -345,28 +348,9 @@ export class TxtToEpubConverter {
     maxChars: number,
     maxBytes: number,
   ): Promise<string> {
-    const reader = file.stream().getReader();
     const decoder = new TextDecoder(encoding);
-    let header = '';
-    let bytesRead = 0;
-
-    try {
-      while (bytesRead < maxBytes && header.length < maxChars) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (!value) continue;
-        bytesRead += value.byteLength;
-        header += decoder.decode(value, { stream: true });
-      }
-      header += decoder.decode();
-      await reader.cancel();
-    } catch {
-      header += decoder.decode();
-    } finally {
-      reader.releaseLock();
-    }
-
-    return header.slice(0, maxChars).trim();
+    const headerBytes = await file.slice(0, Math.min(file.size, maxBytes)).arrayBuffer();
+    return decoder.decode(headerBytes).slice(0, maxChars).trim();
   }
 
   private async *iterateSegmentsFromFile(
@@ -374,64 +358,32 @@ export class TxtToEpubConverter {
     encoding: string,
     linesBetweenSegments: number,
   ): AsyncGenerator<string> {
-    const reader = file.stream().getReader();
     const decoder = new TextDecoder(encoding);
     const segmentRegex = this.createSegmentRegex(linesBetweenSegments);
     let pending = '';
-    let completed = false;
+    let offset = 0;
 
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) {
-          completed = true;
-          break;
-        }
-        if (!value) continue;
-        pending += decoder.decode(value, { stream: true });
-        const consumed = this.consumeCompleteSegments(pending, segmentRegex);
-        pending = consumed.pending;
-        for (const segment of consumed.segments) {
-          yield segment;
-        }
-      }
+    while (offset < file.size) {
+      const nextOffset = Math.min(file.size, offset + LARGE_FILE_READ_CHUNK_BYTES);
+      const chunk = await file.slice(offset, nextOffset).arrayBuffer();
+      offset = nextOffset;
 
-      pending += decoder.decode();
-      const consumed = this.consumeCompleteSegments(pending, segmentRegex);
-      for (const segment of consumed.segments) {
-        yield segment;
-      }
-      if (consumed.pending) {
-        yield consumed.pending;
-      }
-    } finally {
-      if (!completed) {
-        try {
-          await reader.cancel();
-        } catch {
-          // ignore cancel errors during early exit
-        }
-      }
-      reader.releaseLock();
-    }
-  }
-
-  private *iterateSegmentsFromTextChunks(
-    chunks: Iterable<string>,
-    linesBetweenSegments: number,
-  ): Generator<string> {
-    const segmentRegex = this.createSegmentRegex(linesBetweenSegments);
-    let pending = '';
-    for (const chunk of chunks) {
-      pending += chunk;
+      if (chunk.byteLength === 0) break;
+      pending += decoder.decode(chunk, { stream: offset < file.size });
       const consumed = this.consumeCompleteSegments(pending, segmentRegex);
       pending = consumed.pending;
       for (const segment of consumed.segments) {
         yield segment;
       }
     }
-    if (pending) {
-      yield pending;
+
+    pending += decoder.decode();
+    const consumed = this.consumeCompleteSegments(pending, segmentRegex);
+    for (const segment of consumed.segments) {
+      yield segment;
+    }
+    if (consumed.pending) {
+      yield consumed.pending;
     }
   }
 
@@ -821,12 +773,12 @@ export class TxtToEpubConverter {
     const utf8HeadSample = buffer.slice(0, utf8HeadSampleSize);
 
     try {
-      new TextDecoder('utf-8', { fatal: true }).decode(utf8HeadSample);
+      this.assertStrictUtf8Sample(new Uint8Array(utf8HeadSample));
       if (buffer.byteLength > utf8HeadSampleSize * 2) {
         const midSampleSize = Math.min(8192, buffer.byteLength - utf8HeadSampleSize);
         const midSampleStart = Math.floor((buffer.byteLength - midSampleSize) / 2);
         const midSample = buffer.slice(midSampleStart, midSampleStart + midSampleSize);
-        new TextDecoder('utf-8', { fatal: true }).decode(midSample);
+        this.assertStrictUtf8Sample(new Uint8Array(midSample));
       }
       return 'utf-8';
     } catch {
@@ -915,5 +867,59 @@ export class TxtToEpubConverter {
   private extractBookTitle(filename: string): string {
     const match = filename.match(/《([^》]+)》/);
     return match ? match[1]! : filename.split('.')[0]!;
+  }
+
+  private assertStrictUtf8Sample(sample: Uint8Array): void {
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    try {
+      decoder.decode(sample);
+      return;
+    } catch {
+      // Sampling may start/end inside a multibyte code point.
+      // Retry a few boundary offsets while keeping most bytes untouched.
+      const maxOffset = Math.min(3, sample.length - 1);
+      for (let startOffset = 0; startOffset <= maxOffset; startOffset++) {
+        for (let endOffset = 0; endOffset <= maxOffset; endOffset++) {
+          if (startOffset === 0 && endOffset === 0) continue;
+          const end = sample.length - endOffset;
+          if (end - startOffset < 16) continue;
+          try {
+            decoder.decode(sample.subarray(startOffset, end));
+            return;
+          } catch {
+            // continue trying other offsets
+          }
+        }
+      }
+      throw new Error('invalid utf-8 sample');
+    }
+  }
+
+  private isEncodingSupported(encoding: string): boolean {
+    try {
+      new TextDecoder(encoding);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private resolveSupportedEncoding(detectedEncoding: string): string {
+    const normalized = detectedEncoding.toLowerCase();
+    const candidates = [
+      normalized,
+      ...(normalized === 'gbk' ? ['gb18030', 'gb2312'] : []),
+      ...(normalized === 'gb18030' ? ['gbk', 'gb2312'] : []),
+      ...(normalized === 'shift-jis' ? ['shift_jis', 'sjis'] : []),
+      ...(normalized === 'utf-16' ? ['utf-16le', 'utf-16be'] : []),
+      'utf-8',
+    ];
+
+    for (const encoding of candidates) {
+      if (this.isEncodingSupported(encoding)) {
+        return encoding;
+      }
+    }
+    return 'utf-8';
   }
 }
