@@ -6,6 +6,7 @@ import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { useTranslation } from '@/hooks/useTranslation';
 import { RiFontSize } from 'react-icons/ri';
 import { RiDashboardLine, RiTranslate } from 'react-icons/ri';
+import { RiVoiceAiFill } from 'react-icons/ri';
 import { VscSymbolColor } from 'react-icons/vsc';
 import { PiDotsThreeVerticalBold, PiRobot } from 'react-icons/pi';
 import { LiaHandPointerSolid } from 'react-icons/lia';
@@ -24,6 +25,7 @@ import ControlPanel from './ControlPanel';
 import LangPanel from './LangPanel';
 import MiscPanel from './MiscPanel';
 import AIPanel from './AIPanel';
+import TTSSettingsPanel from './TTSSettingsPanel';
 import { useCommandPalette } from '@/components/command-palette';
 
 export type SettingsPanelType =
@@ -32,6 +34,7 @@ export type SettingsPanelType =
   | 'Color'
   | 'Control'
   | 'Language'
+  | 'TTS'
   | 'AI'
   | 'Custom';
 export type SettingsPanelPanelProp = {
@@ -90,6 +93,11 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       label: _('Language'),
     },
     {
+      tab: 'TTS',
+      icon: RiVoiceAiFill,
+      label: _('TTS'),
+    },
+    {
       tab: 'AI',
       icon: PiRobot,
       label: _('AI Assistant'),
@@ -134,6 +142,7 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     Color: null,
     Control: null,
     Language: null,
+    TTS: null,
     AI: null,
     Custom: null,
   });
@@ -166,6 +175,7 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
         color: 'Color',
         control: 'Control',
         language: 'Language',
+        tts: 'TTS',
         ai: 'AI',
         custom: 'Custom',
       };
@@ -376,6 +386,12 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
           <LangPanel
             bookKey={bookKey}
             onRegisterReset={(fn) => registerResetFunction('Language', fn)}
+          />
+        )}
+        {activePanel === 'TTS' && (
+          <TTSSettingsPanel
+            bookKey={bookKey}
+            onRegisterReset={(fn) => registerResetFunction('TTS', fn)}
           />
         )}
         {activePanel === 'AI' && <AIPanel />}

@@ -9,6 +9,8 @@ import { NativeTTSClient } from './NativeTTSClient';
 import { EdgeTTSClient } from './EdgeTTSClient';
 import { TTSUtils } from './TTSUtils';
 import { TTSClient } from './TTSClient';
+import { RemoteTTSClient } from './RemoteTTSClient';
+import { TTSSettings } from '@/types/settings';
 
 type TTSState =
   | 'stopped'
@@ -41,10 +43,13 @@ export class TTSController extends EventTarget {
   ttsWebClient: TTSClient;
   ttsEdgeClient: TTSClient;
   ttsNativeClient: TTSClient | null = null;
+  ttsRemoteClient: TTSClient;
   ttsWebVoices: TTSVoice[] = [];
   ttsEdgeVoices: TTSVoice[] = [];
   ttsNativeVoices: TTSVoice[] = [];
+  ttsRemoteVoices: TTSVoice[] = [];
   ttsTargetLang: string = '';
+  ttsSettings: TTSSettings | null = null;
 
   options: TTSHighlightOptions = { style: 'highlight', color: 'gray' };
 
@@ -54,6 +59,7 @@ export class TTSController extends EventTarget {
     isAuthenticated: boolean = false,
     preprocessCallback?: (ssml: string) => Promise<string>,
     onSectionChange?: (sectionIndex: number) => Promise<void>,
+    ttsSettings?: TTSSettings | null,
   ) {
     super();
     this.ttsWebClient = new WebSpeechClient(this);
@@ -62,12 +68,14 @@ export class TTSController extends EventTarget {
     if (appService?.isAndroidApp) {
       this.ttsNativeClient = new NativeTTSClient(this);
     }
+    this.ttsRemoteClient = new RemoteTTSClient(this, () => this.ttsSettings);
     this.ttsClient = this.ttsWebClient;
     this.appService = appService;
     this.view = view;
     this.isAuthenticated = isAuthenticated;
     this.preprocessCallback = preprocessCallback;
     this.onSectionChange = onSectionChange;
+    this.ttsSettings = ttsSettings || null;
   }
 
   async init() {
@@ -79,21 +87,48 @@ export class TTSController extends EventTarget {
       availableClients.push(this.ttsNativeClient);
       this.ttsNativeVoices = await this.ttsNativeClient.getAllVoices();
     }
+    if (await this.ttsRemoteClient.init()) {
+      availableClients.push(this.ttsRemoteClient);
+    }
     if (await this.ttsWebClient.init()) {
       availableClients.push(this.ttsWebClient);
     }
     this.ttsClient = availableClients[0] || this.ttsWebClient;
-    const preferredClientName = TTSUtils.getPreferredClient();
+    const preferredClientName = this.ttsSettings?.defaultEngine || TTSUtils.getPreferredClient();
     if (preferredClientName) {
-      const preferredClient = availableClients.find(
-        (client) => client.name === preferredClientName,
-      );
-      if (preferredClient) {
-        this.ttsClient = preferredClient;
-      }
+      await this.setEngine(preferredClientName, false, availableClients);
     }
     this.ttsWebVoices = await this.ttsWebClient.getAllVoices();
     this.ttsEdgeVoices = await this.ttsEdgeClient.getAllVoices();
+    this.ttsRemoteVoices = await this.ttsRemoteClient.getAllVoices();
+  }
+
+  async setEngine(
+    engine: string,
+    persist = true,
+    availableClients?: TTSClient[],
+  ): Promise<boolean> {
+    const candidates = availableClients || [
+      this.ttsEdgeClient,
+      ...(this.ttsNativeClient ? [this.ttsNativeClient] : []),
+      this.ttsRemoteClient,
+      this.ttsWebClient,
+    ];
+    const selected = candidates.find((client) => client.name === engine && client.initialized);
+    if (!selected) return false;
+    this.ttsClient = selected;
+    await this.ttsClient.setRate(this.ttsRate);
+    if (persist) {
+      TTSUtils.setPreferredClient(this.ttsClient.name);
+      if (this.ttsSettings) {
+        this.ttsSettings.defaultEngine = this.ttsClient.name as TTSSettings['defaultEngine'];
+      }
+    }
+    return true;
+  }
+
+  getEngine(): string {
+    return this.ttsClient.name;
   }
 
   #getHighlighter() {
@@ -445,6 +480,7 @@ export class TTSController extends EventTarget {
     if (this.ttsEdgeClient.initialized) this.ttsEdgeClient.setPrimaryLang(lang);
     if (this.ttsWebClient.initialized) this.ttsWebClient.setPrimaryLang(lang);
     if (this.ttsNativeClient?.initialized) this.ttsNativeClient?.setPrimaryLang(lang);
+    if (this.ttsRemoteClient.initialized) this.ttsRemoteClient.setPrimaryLang(lang);
   }
 
   async setRate(rate: number) {
@@ -457,8 +493,14 @@ export class TTSController extends EventTarget {
     const ttsWebVoices = await this.ttsWebClient.getVoices(lang);
     const ttsEdgeVoices = await this.ttsEdgeClient.getVoices(lang);
     const ttsNativeVoices = (await this.ttsNativeClient?.getVoices(lang)) ?? [];
+    const ttsRemoteVoices = (await this.ttsRemoteClient?.getVoices(lang)) ?? [];
 
-    const voicesGroups = [...ttsNativeVoices, ...ttsEdgeVoices, ...ttsWebVoices];
+    const voicesGroups = [
+      ...ttsNativeVoices,
+      ...ttsRemoteVoices,
+      ...ttsEdgeVoices,
+      ...ttsWebVoices,
+    ];
     return voicesGroups;
   }
 
@@ -470,6 +512,9 @@ export class TTSController extends EventTarget {
     const useNativeTTS = !!this.ttsNativeVoices.find(
       (voice) => (voiceId === '' || voice.id === voiceId) && !voice.disabled,
     );
+    const useRemoteTTS = !!this.ttsRemoteVoices.find(
+      (voice) => (voiceId === '' || voice.id === voiceId) && !voice.disabled,
+    );
     if (useEdgeTTS) {
       this.ttsClient = this.ttsEdgeClient;
       await this.ttsClient.setRate(this.ttsRate);
@@ -478,6 +523,9 @@ export class TTSController extends EventTarget {
         throw new Error('Native TTS client is not available');
       }
       this.ttsClient = this.ttsNativeClient;
+      await this.ttsClient.setRate(this.ttsRate);
+    } else if (useRemoteTTS) {
+      this.ttsClient = this.ttsRemoteClient;
       await this.ttsClient.setRate(this.ttsRate);
     } else {
       this.ttsClient = this.ttsWebClient;
@@ -532,6 +580,9 @@ export class TTSController extends EventTarget {
     }
     if (this.ttsNativeClient?.initialized) {
       await this.ttsNativeClient.shutdown();
+    }
+    if (this.ttsRemoteClient.initialized) {
+      await this.ttsRemoteClient.shutdown();
     }
   }
 }

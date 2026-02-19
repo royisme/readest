@@ -83,6 +83,7 @@ import { CustomTextureInfo } from '@/styles/textures';
 import { CustomFont, CustomFontInfo } from '@/styles/fonts';
 import { parseFontInfo } from '@/utils/font';
 import { svg2png } from '@/utils/svg';
+import { normalizeTTSSettings, readLegacyPreferredClient } from './tts/providerSettings';
 
 export abstract class BaseAppService implements AppService {
   osPlatform: OsPlatform = getOSPlatform();
@@ -272,6 +273,7 @@ export abstract class BaseAppService implements AppService {
       ...DEFAULT_AI_SETTINGS,
       ...settings.aiSettings,
     };
+    settings.ttsSettings = normalizeTTSSettings(settings.ttsSettings, readLegacyPreferredClient());
 
     settings.localBooksDir = await this.fs.getPrefix('Books');
 

@@ -26,6 +26,7 @@ import { UserStorageQuota, UserDailyTranslationQuota } from '@/types/quota';
 import { getDefaultMaxBlockSize, getDefaultMaxInlineSize } from '@/utils/config';
 import { stubTranslation as _ } from '@/utils/misc';
 import { DEFAULT_AI_SETTINGS } from './ai/constants';
+import { DEFAULT_TTS_SETTINGS } from './tts/providerSettings';
 
 export const DATA_SUBDIR = 'Inkline';
 export const LOCAL_BOOKS_SUBDIR = `${DATA_SUBDIR}/Books`;
@@ -91,6 +92,7 @@ export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
   metadataSeriesCollapsed: false,
   metadataOthersCollapsed: false,
   metadataDescriptionCollapsed: false,
+  ttsSettings: DEFAULT_TTS_SETTINGS,
 
   kosync: DEFAULT_KOSYNC_SETTINGS,
   aiSettings: DEFAULT_AI_SETTINGS,

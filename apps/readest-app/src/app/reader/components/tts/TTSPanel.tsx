@@ -11,6 +11,8 @@ import { TranslationFunc, useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useDefaultIconSize, useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { getLanguageName } from '@/utils/lang';
+import { TTSEngineType } from '@/types/settings';
+import { normalizeTTSSettings } from '@/services/tts/providerSettings';
 
 type TTSPanelProps = {
   bookKey: string;
@@ -25,6 +27,8 @@ type TTSPanelProps = {
   onGetVoices: (lang: string) => Promise<TTSVoicesGroup[]>;
   onSetVoice: (voice: string, lang: string) => void;
   onGetVoiceId: () => string;
+  onSetEngine: (engine: TTSEngineType) => void;
+  onGetEngine: () => string;
   onSelectTimeout: (bookKey: string, value: number) => void;
   onToogleTTSBar: () => void;
 };
@@ -114,6 +118,8 @@ const TTSPanel = ({
   onGetVoices,
   onSetVoice,
   onGetVoiceId,
+  onSetEngine,
+  onGetEngine,
   onSelectTimeout,
   onToogleTTSBar,
 }: TTSPanelProps) => {
@@ -126,6 +132,9 @@ const TTSPanel = ({
   const [voiceGroups, setVoiceGroups] = useState<TTSVoicesGroup[]>([]);
   const [rate, setRate] = useState(viewSettings?.ttsRate ?? 1.0);
   const [selectedVoice, setSelectedVoice] = useState(viewSettings?.ttsVoice ?? '');
+  const [selectedEngine, setSelectedEngine] = useState<TTSEngineType>(
+    (settings.ttsSettings?.defaultEngine as TTSEngineType) || 'edge-tts',
+  );
 
   const [timeoutCountdown, setTimeoutCountdown] = useState(() => {
     return getCountdownTime(timeoutTimestamp);
@@ -156,6 +165,21 @@ const TTSPanel = ({
     setViewSettings(bookKey, viewSettings);
   };
 
+  const handleSetEngine = (engine: TTSEngineType) => {
+    setSelectedEngine(engine);
+    onSetEngine(engine);
+    const normalizedTTSSettings = normalizeTTSSettings(settings.ttsSettings);
+    const nextSettings = {
+      ...settings,
+      ttsSettings: {
+        ...normalizedTTSSettings,
+        defaultEngine: engine,
+      },
+    };
+    setSettings(nextSettings);
+    saveSettings(envConfig, nextSettings);
+  };
+
   const updateTimeout = (timeout: number) => {
     const now = Date.now();
     if (timeout > 0 && timeout < now) {
@@ -176,6 +200,7 @@ const TTSPanel = ({
   useEffect(() => {
     const voiceId = onGetVoiceId();
     setSelectedVoice(voiceId);
+    setSelectedEngine(onGetEngine() as TTSEngineType);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -205,6 +230,19 @@ const TTSPanel = ({
   return (
     <div className='flex w-full flex-col items-center justify-center gap-2 rounded-2xl px-4 pt-4 sm:gap-1'>
       <div className='flex w-full flex-col items-center gap-0.5'>
+        <div className='mb-1 flex w-full items-center gap-2'>
+          <span className='text-xs opacity-70'>{_('Engine')}</span>
+          <select
+            className='select select-bordered select-xs h-7 min-h-7 flex-1'
+            value={selectedEngine}
+            onChange={(e) => handleSetEngine(e.target.value as TTSEngineType)}
+          >
+            <option value='edge-tts'>Edge TTS</option>
+            <option value='web-speech'>Web Speech</option>
+            <option value='native-tts'>Native TTS</option>
+            <option value='remote-tts'>Remote Provider</option>
+          </select>
+        </div>
         <input
           className='range'
           type='range'

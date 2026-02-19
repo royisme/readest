@@ -5,6 +5,7 @@ import { useThemeStore } from '@/store/themeStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useProofreadStore } from '@/store/proofreadStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { TransformContext } from '@/services/transformers/types';
 import { proofreadTransformer } from '@/services/transformers/proofread';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -18,6 +19,7 @@ import { getLocale } from '@/utils/misc';
 import { invokeUseBackgroundAudio } from '@/utils/bridge';
 import { estimateTTSTime } from '@/utils/ttsTime';
 import { useTTSMediaSession } from './useTTSMediaSession';
+import { TTSEngineType } from '@/types/settings';
 
 interface UseTTSControlProps {
   bookKey: string;
@@ -33,6 +35,7 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
   const { getView, getProgress, getViewSettings } = useReaderStore();
   const { setViewSettings, setTTSEnabled } = useReaderStore();
   const { getMergedRules } = useProofreadStore();
+  const { settings } = useSettingsStore();
 
   const [ttsLang, setTtsLang] = useState<string>('en');
   const [isPlaying, setIsPlaying] = useState(false);
@@ -422,6 +425,7 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
         !!user?.id,
         preprocessSSMLForTTS,
         handleSectionChange,
+        settings.ttsSettings,
       );
       ttsControllerRef.current = ttsController;
       setTtsController(ttsController);
@@ -552,6 +556,18 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
     [],
   );
 
+  const handleSetEngine = useCallback(async (engine: TTSEngineType) => {
+    const ttsController = ttsControllerRef.current;
+    if (!ttsController) return;
+    await ttsController.setEngine(engine);
+  }, []);
+
+  const handleGetEngine = useCallback((): string => {
+    return (
+      ttsControllerRef.current?.getEngine() || settings.ttsSettings?.defaultEngine || 'edge-tts'
+    );
+  }, [settings.ttsSettings?.defaultEngine]);
+
   const handleGetVoices = async (lang: string): Promise<TTSVoicesGroup[]> => {
     const ttsController = ttsControllerRef.current;
     if (ttsController) {
@@ -655,6 +671,8 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
     handleForward,
     handlePause,
     handleSetRate,
+    handleSetEngine,
+    handleGetEngine,
     handleSetVoice,
     handleGetVoices,
     handleGetVoiceId,

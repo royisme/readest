@@ -34,6 +34,27 @@ export type LibraryGroupByType = (typeof LibraryGroupByType)[keyof typeof Librar
 
 export type KOSyncChecksumMethod = 'binary' | 'filename';
 export type KOSyncStrategy = 'prompt' | 'silent' | 'send' | 'receive';
+export type TTSEngineType = 'edge-tts' | 'web-speech' | 'native-tts' | 'remote-tts';
+export type TTSProviderType = 'openai_compatible';
+
+export interface TTSProviderProfile {
+  id: string;
+  name: string;
+  type: TTSProviderType;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  defaultVoice: string;
+  enabled: boolean;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+}
+
+export interface TTSSettings {
+  defaultEngine: TTSEngineType;
+  activeProviderId: string | null;
+  providers: TTSProviderProfile[];
+}
 
 export interface ReadSettings {
   sideBarWidth: string;
@@ -99,6 +120,7 @@ export interface SystemSettings {
   metadataSeriesCollapsed: boolean;
   metadataOthersCollapsed: boolean;
   metadataDescriptionCollapsed: boolean;
+  ttsSettings: TTSSettings;
 
   kosync: KOSyncSettings;
 
