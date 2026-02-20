@@ -186,7 +186,9 @@ export class RemoteTTSClient implements TTSClient {
         const flushQueue = () => {
           if (!sourceBuffer || sourceBuffer.updating || chunkQueue.length === 0) return;
           try {
-            sourceBuffer.appendBuffer(chunkQueue.shift()!);
+            const chunk = chunkQueue.shift()!;
+            const normalizedChunk = new Uint8Array(chunk);
+            sourceBuffer.appendBuffer(normalizedChunk);
           } catch (error) {
             fail(error);
           }
