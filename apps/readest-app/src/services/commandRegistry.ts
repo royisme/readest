@@ -152,6 +152,7 @@ const panelIcons: Record<SettingsPanelType, IconType> = {
   Color: VscSymbolColor,
   Control: LiaHandPointerSolid,
   Language: RiTranslate,
+  TTS: PiRobot,
   AI: PiRobot,
   Custom: IoAccessibilityOutline,
 };
