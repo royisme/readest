@@ -6,6 +6,7 @@ import { TTSGranularity, TTSVoice, TTSVoicesGroup } from './types';
 import { TTSController } from './TTSController';
 import { TTSUtils } from './TTSUtils';
 import { TTSProviderProfile, TTSSettings } from '@/types/settings';
+import { buildRemoteTTSSegments } from './remote/textSegmenter';
 
 const REMOTE_VOICE_PREFIX = 'remote-tts:';
 
@@ -36,6 +37,10 @@ export class RemoteTTSClient implements TTSClient {
   #currentVoiceId = '';
   #rate = 1.0;
   #isStopped = false;
+  #preferredSegmentMaxChars = 260;
+  #absoluteSegmentMaxChars = 500;
+  #minSegmentChars = 120;
+  #prefetchWindowSize = 3;
 
   constructor(controller?: TTSController, getTTSSettings?: () => TTSSettings | null) {
     this.controller = controller;
@@ -76,34 +81,77 @@ export class RemoteTTSClient implements TTSClient {
     }
 
     const { marks } = parseSSMLMarks(ssml, this.#primaryLang);
-    for (const mark of marks) {
+    const segments = buildRemoteTTSSegments(marks, {
+      preferredMaxChars: this.#preferredSegmentMaxChars,
+      absoluteMaxChars: this.#absoluteSegmentMaxChars,
+      minCharsPerSegment: this.#minSegmentChars,
+    });
+
+    const decoded = decodeRemoteVoiceId(this.#currentVoiceId);
+    const selectedVoice =
+      decoded && decoded.providerId === provider.id ? decoded.voiceId : provider.defaultVoice;
+
+    const requestAudioBuffer = async (segmentText: string): Promise<ArrayBuffer> => {
+      const response = await fetchWithAuth('/api/tts/remote/speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          input: segmentText,
+          model: provider.model,
+          voice: selectedVoice,
+          speed: this.#rate,
+          responseFormat: 'mp3',
+        }),
+      });
+      return await response.arrayBuffer();
+    };
+
+    const audioBufferPromises = new Map<number, Promise<ArrayBuffer>>();
+    const getOrCreateAudioPromise = (index: number): Promise<ArrayBuffer> => {
+      if (audioBufferPromises.has(index)) {
+        return audioBufferPromises.get(index)!;
+      }
+      const segment = segments[index];
+      if (!segment) {
+        return Promise.reject(new Error('Invalid segment index'));
+      }
+      const promise = requestAudioBuffer(segment.text);
+      promise.catch(() => {
+        // keep prefetched request rejections from becoming unhandled;
+        // errors are surfaced when the segment is actually awaited.
+      });
+      audioBufferPromises.set(index, promise);
+      return promise;
+    };
+
+    const warmupAudioRequests = (startIndex: number) => {
+      const endExclusive = Math.min(segments.length, startIndex + this.#prefetchWindowSize);
+      for (let idx = startIndex; idx < endExclusive; idx++) {
+        getOrCreateAudioPromise(idx);
+      }
+    };
+
+    warmupAudioRequests(0);
+
+    for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex++) {
+      const segment = segments[segmentIndex]!;
       if (signal.aborted || this.#isStopped) {
         yield { code: 'error', message: 'Aborted' };
         return;
       }
-      this.#speakingLang = mark.language || this.#primaryLang;
-      this.controller?.dispatchSpeakMark(mark);
-      yield { code: 'boundary', mark: mark.name, message: `Start chunk: ${mark.name}` };
+      this.#speakingLang = segment.language || this.#primaryLang;
+      this.controller?.dispatchSpeakMark(segment.anchorMark);
+      yield {
+        code: 'boundary',
+        mark: segment.anchorMark.name,
+        message: `Start chunk: ${segment.anchorMark.name}`,
+      };
 
       try {
-        const decoded = decodeRemoteVoiceId(this.#currentVoiceId);
-        const selectedVoice =
-          decoded && decoded.providerId === provider.id ? decoded.voiceId : provider.defaultVoice;
-
-        const response = await fetchWithAuth('/api/tts/remote/speech', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            provider,
-            input: mark.text,
-            model: provider.model,
-            voice: selectedVoice,
-            speed: this.#rate,
-            responseFormat: 'mp3',
-          }),
-        });
-
-        const audioBuffer = await response.arrayBuffer();
+        warmupAudioRequests(segmentIndex + 1);
+        const audioBuffer = await getOrCreateAudioPromise(segmentIndex);
+        audioBufferPromises.delete(segmentIndex);
         if (signal.aborted || this.#isStopped) {
           yield { code: 'error', message: 'Aborted' };
           return;
