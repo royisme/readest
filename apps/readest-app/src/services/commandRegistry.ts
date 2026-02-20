@@ -3,7 +3,7 @@ import { SettingsPanelType } from '@/components/settings/SettingsDialog';
 import { RiFontSize, RiDashboardLine, RiTranslate } from 'react-icons/ri';
 import { VscSymbolColor } from 'react-icons/vsc';
 import { LiaHandPointerSolid } from 'react-icons/lia';
-import { IoAccessibilityOutline } from 'react-icons/io5';
+import { IoAccessibilityOutline, IoEarOutline } from 'react-icons/io5';
 import { PiRobot, PiSun, PiMoon } from 'react-icons/pi';
 import { TbSunMoon } from 'react-icons/tb';
 import { MdRefresh } from 'react-icons/md';
@@ -152,7 +152,7 @@ const panelIcons: Record<SettingsPanelType, IconType> = {
   Color: VscSymbolColor,
   Control: LiaHandPointerSolid,
   Language: RiTranslate,
-  TTS: PiRobot,
+  TTS: IoEarOutline,
   AI: PiRobot,
   Custom: IoAccessibilityOutline,
 };
