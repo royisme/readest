@@ -19,9 +19,12 @@ const toHttpStatus = (code: string, fallbackStatus: number): number => {
 };
 
 export async function POST(request: NextRequest) {
-  const { user, token } = await validateUserAndToken(request.headers.get('authorization'));
-  if (!user || !token) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 403 });
+  const requiresAuth = process.env['NEXT_PUBLIC_APP_PLATFORM'] !== 'tauri';
+  if (requiresAuth) {
+    const { user, token } = await validateUserAndToken(request.headers.get('authorization'));
+    if (!user || !token) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 403 });
+    }
   }
 
   try {

@@ -37,6 +37,11 @@ export type KOSyncStrategy = 'prompt' | 'silent' | 'send' | 'receive';
 export type TTSEngineType = 'edge-tts' | 'web-speech' | 'native-tts' | 'remote-tts';
 export type TTSProviderType = 'openai_compatible';
 export type TTSAudioFormat = 'mp3' | 'wav';
+export interface TTSProviderVoice {
+  id: string;
+  name: string;
+  lang: string;
+}
 
 export interface TTSProviderProfile {
   id: string;
@@ -51,6 +56,7 @@ export interface TTSProviderProfile {
   timeoutMs?: number;
   responseFormat?: TTSAudioFormat;
   stream?: boolean;
+  cachedVoices?: TTSProviderVoice[];
 }
 
 export interface TTSSettings {

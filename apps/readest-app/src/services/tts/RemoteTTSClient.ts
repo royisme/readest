@@ -1,12 +1,14 @@
 import { getUserLocale } from '@/utils/misc';
-import { fetchWithAuth } from '@/utils/fetch';
+import { fetchWithOptionalAuth } from '@/utils/fetch';
 import { parseSSMLMarks } from '@/utils/ssml';
+import { isTauriAppPlatform } from '@/services/environment';
 import { TTSClient, TTSMessageEvent } from './TTSClient';
 import { TTSGranularity, TTSVoice, TTSVoicesGroup } from './types';
 import { TTSController } from './TTSController';
 import { TTSUtils } from './TTSUtils';
 import { TTSProviderProfile, TTSSettings } from '@/types/settings';
 import { buildRemoteTTSSegments } from './remote/textSegmenter';
+import { getRemoteTTSAdapter } from './remote/factory';
 
 const REMOTE_VOICE_PREFIX = 'remote-tts:';
 
@@ -37,10 +39,11 @@ export class RemoteTTSClient implements TTSClient {
   #currentVoiceId = '';
   #rate = 1.0;
   #isStopped = false;
-  #preferredSegmentMaxChars = 260;
+  #audioElement: HTMLAudioElement | null = null;
+  #preferredSegmentMaxChars = 90;
   #absoluteSegmentMaxChars = 500;
-  #minSegmentChars = 120;
-  #prefetchWindowSize = 3;
+  #minSegmentChars = 40;
+  #prefetchWindowSize = 4;
 
   constructor(controller?: TTSController, getTTSSettings?: () => TTSSettings | null) {
     this.controller = controller;
@@ -88,13 +91,45 @@ export class RemoteTTSClient implements TTSClient {
     });
 
     const decoded = decodeRemoteVoiceId(this.#currentVoiceId);
-    const selectedVoice =
+    const cachedVoiceIds = (provider.cachedVoices || []).map((voice) => voice.id);
+    let selectedVoice =
       decoded && decoded.providerId === provider.id ? decoded.voiceId : provider.defaultVoice;
+    if (cachedVoiceIds.length > 0 && !cachedVoiceIds.includes(selectedVoice)) {
+      selectedVoice = cachedVoiceIds[0]!;
+    }
     const responseFormat = provider.responseFormat || 'mp3';
     const stream = !!provider.stream;
+    // On Tauri mobile, chunked streaming responses are not consistently playable across devices.
+    // Fallback to buffered synthesis while keeping segment prefetch to preserve continuity.
+    const useStreamingTransport = stream && !isTauriAppPlatform();
+    const adapter = getRemoteTTSAdapter(provider);
 
     const requestAudioResponse = async (segmentText: string): Promise<Response> => {
-      return await fetchWithAuth('/api/tts/remote/speech', {
+      if (isTauriAppPlatform()) {
+        if (useStreamingTransport) {
+          return await adapter.synthesizeStream(provider, {
+            input: segmentText,
+            model: provider.model,
+            voice: selectedVoice,
+            speed: this.#rate,
+            responseFormat,
+            stream: useStreamingTransport,
+          });
+        }
+        const result = await adapter.synthesize(provider, {
+          input: segmentText,
+          model: provider.model,
+          voice: selectedVoice,
+          speed: this.#rate,
+          responseFormat,
+          stream: useStreamingTransport,
+        });
+        return new Response(result.data, {
+          status: 200,
+          headers: { 'Content-Type': result.contentType },
+        });
+      }
+      return await fetchWithOptionalAuth('/api/tts/remote/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -104,7 +139,7 @@ export class RemoteTTSClient implements TTSClient {
           voice: selectedVoice,
           speed: this.#rate,
           responseFormat,
-          stream,
+          stream: useStreamingTransport,
         }),
       });
     };
@@ -123,7 +158,13 @@ export class RemoteTTSClient implements TTSClient {
       const audioUrl = URL.createObjectURL(blob);
       try {
         await new Promise<void>((resolve, reject) => {
-          const audio = new Audio(audioUrl);
+          const audio = this.#audioElement || new Audio();
+          if (!this.#audioElement) {
+            this.#audioElement = audio;
+            audio.preload = 'auto';
+            audio.setAttribute('playsinline', 'true');
+          }
+          audio.src = audioUrl;
           audio.onended = () => resolve();
           audio.onerror = () => reject(new Error('Audio playback error'));
           audio.playbackRate = this.#rate;
@@ -245,7 +286,34 @@ export class RemoteTTSClient implements TTSClient {
       });
     };
 
-    if (stream) {
+    if (useStreamingTransport) {
+      const streamResponsePromises = new Map<number, Promise<Response>>();
+      const getOrCreateStreamResponsePromise = (index: number): Promise<Response> => {
+        if (streamResponsePromises.has(index)) {
+          return streamResponsePromises.get(index)!;
+        }
+        const segment = segments[index];
+        if (!segment) {
+          return Promise.reject(new Error('Invalid segment index'));
+        }
+        const promise = requestAudioResponse(segment.text);
+        promise.catch(() => {
+          // keep prefetched request rejections from becoming unhandled;
+          // errors are surfaced when the segment is actually awaited.
+        });
+        streamResponsePromises.set(index, promise);
+        return promise;
+      };
+
+      const warmupStreamResponses = (startIndex: number) => {
+        const endExclusive = Math.min(segments.length, startIndex + this.#prefetchWindowSize);
+        for (let idx = startIndex; idx < endExclusive; idx++) {
+          getOrCreateStreamResponsePromise(idx);
+        }
+      };
+
+      warmupStreamResponses(0);
+
       for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex++) {
         const segment = segments[segmentIndex]!;
         if (signal.aborted || this.#isStopped) {
@@ -261,7 +329,9 @@ export class RemoteTTSClient implements TTSClient {
         };
 
         try {
-          const response = await requestAudioResponse(segment.text);
+          warmupStreamResponses(segmentIndex + 1);
+          const response = await getOrCreateStreamResponsePromise(segmentIndex);
+          streamResponsePromises.delete(segmentIndex);
           await playStreamedResponse(response);
         } catch (error) {
           yield {
@@ -379,6 +449,12 @@ export class RemoteTTSClient implements TTSClient {
 
   async stop() {
     this.#isStopped = true;
+    if (this.#audioElement) {
+      this.#audioElement.pause();
+      this.#audioElement.onended = null;
+      this.#audioElement.onerror = null;
+      this.#audioElement.src = '';
+    }
   }
 
   setPrimaryLang(lang: string) {
@@ -406,14 +482,34 @@ export class RemoteTTSClient implements TTSClient {
       this.#voices = [];
       return [];
     }
+    const adapter = getRemoteTTSAdapter(provider);
+    if (provider.cachedVoices && provider.cachedVoices.length > 0) {
+      this.#voices = provider.cachedVoices.map((voice) => ({
+        id: encodeRemoteVoiceId(provider.id, voice.id),
+        name: voice.name,
+        lang: voice.lang,
+        disabled: !this.initialized,
+      }));
+      return this.#voices;
+    }
 
     try {
-      const response = await fetchWithAuth('/api/tts/remote/voices', {
+      if (isTauriAppPlatform()) {
+        const voices = await adapter.listVoices(provider);
+        this.#voices = voices.map((voice: TTSVoice) => ({
+          id: encodeRemoteVoiceId(provider.id, voice.id),
+          name: voice.name,
+          lang: voice.lang,
+          disabled: !this.initialized,
+        }));
+        return this.#voices;
+      }
+
+      const response = await fetchWithOptionalAuth('/api/tts/remote/voices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider,
-          lang: this.#primaryLang || getUserLocale('en') || 'en',
         }),
       });
       const payload = await response.json();
@@ -437,12 +533,13 @@ export class RemoteTTSClient implements TTSClient {
     const filteredVoices = voices.filter(
       (v) => v.lang.startsWith(locale) || (lang === 'en' && ['en-US', 'en-GB'].includes(v.lang)),
     );
+    const displayVoices = filteredVoices.length > 0 ? filteredVoices : voices;
 
     const voicesGroup: TTSVoicesGroup = {
       id: 'remote-tts',
       name: 'Remote TTS',
-      voices: filteredVoices.sort(TTSUtils.sortVoicesFunc),
-      disabled: !this.initialized || filteredVoices.length === 0,
+      voices: displayVoices.sort(TTSUtils.sortVoicesFunc),
+      disabled: !this.initialized || displayVoices.length === 0,
     };
 
     return [voicesGroup];
@@ -463,5 +560,10 @@ export class RemoteTTSClient implements TTSClient {
   async shutdown(): Promise<void> {
     this.initialized = false;
     this.#voices = [];
+    if (this.#audioElement) {
+      this.#audioElement.pause();
+      this.#audioElement.src = '';
+      this.#audioElement = null;
+    }
   }
 }

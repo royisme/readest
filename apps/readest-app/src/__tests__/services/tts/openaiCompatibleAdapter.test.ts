@@ -69,20 +69,41 @@ describe('OpenAICompatibleAdapter', () => {
     });
   });
 
-  it('returns default voices for openai-compatible providers', async () => {
+  it('returns voices from /audio/voices when provider supports it', async () => {
     const adapter = new OpenAICompatibleAdapter();
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ data: [{ id: 'gpt-4o-mini-tts' }] }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }),
+      vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            voices: [{ id: 'uncle_fu', name: 'Uncle Fu', lang: 'zh' }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
       ),
     );
 
     const voices = await adapter.listVoices(buildProvider());
+    expect(voices).toEqual([{ id: 'uncle_fu', name: 'Uncle Fu', lang: 'zh' }]);
+  });
+
+  it('falls back to built-in voices only for api.openai.com', async () => {
+    const adapter = new OpenAICompatibleAdapter();
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+
+    const voices = await adapter.listVoices({
+      ...buildProvider(),
+      baseUrl: 'https://api.openai.com/v1',
+    });
     expect(voices.some((voice) => voice.id === 'alloy')).toBe(true);
+  });
+
+  it('returns empty voices when non-openai provider has no voices endpoint', async () => {
+    const adapter = new OpenAICompatibleAdapter();
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+
+    const voices = await adapter.listVoices(buildProvider());
+    expect(voices).toEqual([]);
   });
 
   it('synthesizes audio via /audio/speech', async () => {
@@ -120,5 +141,54 @@ describe('OpenAICompatibleAdapter', () => {
     const payload = JSON.parse(String(init.body));
     expect(payload.response_format).toBe('wav');
     expect(payload.stream).toBe(true);
+  });
+
+  it('does not send model when provider and params model are empty', async () => {
+    const adapter = new OpenAICompatibleAdapter();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(new Uint8Array([1]), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await adapter.synthesize(
+      {
+        ...buildProvider(),
+        model: '',
+      },
+      {
+        input: 'hello',
+        voice: 'alloy',
+        responseFormat: 'mp3',
+      },
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(init.body));
+    expect(payload.model).toBeUndefined();
+    expect(payload.input).toBe('hello');
+    expect(payload.voice).toBe('alloy');
+  });
+
+  it('does not send voice when both provider and request voice are empty', async () => {
+    const adapter = new OpenAICompatibleAdapter();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(new Uint8Array([1]), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await adapter.synthesize(
+      {
+        ...buildProvider(),
+        defaultVoice: '',
+      },
+      {
+        input: 'hello',
+        responseFormat: 'mp3',
+      },
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(init.body));
+    expect(payload.voice).toBeUndefined();
   });
 });

@@ -11,7 +11,7 @@
     "start-web": "dotenv -e .env.web -- next start",
     "build-tauri": "dotenv -e .env.tauri -- next build",
     "sync-ios-icons": "bash ./scripts/sync-ios-icons.sh",
-    "i18n:extract": "i18next-scanner",
+    "i18n:extract": "i18next-scanner --config i18next-scanner.config.cjs",
     "lint": "eslint .",
     "test": "dotenv -e .env -e .env.test.local vitest",
     "tauri": "tauri",
@@ -195,5 +195,6 @@
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^4.0.15",
     "wrangler": "^4.60.0"
-  }
+  },
+  "type": "module"
 }

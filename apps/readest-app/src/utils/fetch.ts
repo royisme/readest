@@ -30,3 +30,15 @@ export const fetchWithAuth = async (url: string, options: RequestInit) => {
 
   return response;
 };
+
+export const fetchWithOptionalAuth = async (url: string, options: RequestInit) => {
+  const token = await getAccessToken();
+  const headers = token
+    ? {
+        ...options.headers,
+        Authorization: `Bearer ${token}`,
+      }
+    : options.headers;
+
+  return fetch(url, { ...options, headers });
+};

@@ -24,9 +24,9 @@ describe('buildRemoteTTSSegments', () => {
       minCharsPerSegment: 6,
     });
 
-    expect(segments.map((s) => s.text)).toEqual(['第一句。第二句。', '第三句。第四句。']);
+    expect(segments.map((s) => s.text)).toEqual(['第一句。第二句。第三句。', '第四句。']);
     expect(segments[0]?.anchorMark.name).toBe('0');
-    expect(segments[1]?.anchorMark.name).toBe('2');
+    expect(segments[1]?.anchorMark.name).toBe('3');
   });
 
   it('should keep each segment within absolute max chars', () => {

@@ -48,6 +48,27 @@ const normalizeHeaderRecord = (value: unknown): Record<string, string> | undefin
   return Object.fromEntries(entries) as Record<string, string>;
 };
 
+const normalizeCachedVoices = (
+  value: unknown,
+): NonNullable<TTSProviderProfile['cachedVoices']> | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const voices = value
+    .map((item) => {
+      if (!isRecord(item)) return null;
+      const id = typeof item['id'] === 'string' ? item['id'].trim() : '';
+      const name = typeof item['name'] === 'string' ? item['name'].trim() : '';
+      const lang = typeof item['lang'] === 'string' ? item['lang'].trim() : '';
+      if (!id) return null;
+      return {
+        id,
+        name: name || id,
+        lang: lang || 'en',
+      };
+    })
+    .filter((voice): voice is { id: string; name: string; lang: string } => voice !== null);
+  return voices.length > 0 ? voices : undefined;
+};
+
 export const normalizeTTSProviderProfile = (value: unknown): TTSProviderProfile | null => {
   if (!isRecord(value)) return null;
 
@@ -91,6 +112,7 @@ export const normalizeTTSProviderProfile = (value: unknown): TTSProviderProfile 
     headers: normalizeHeaderRecord(value['headers']),
     responseFormat,
     stream,
+    cachedVoices: normalizeCachedVoices(value['cachedVoices']),
   };
 };
 

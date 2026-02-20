@@ -19,9 +19,12 @@ const toHttpStatus = (code: string, fallbackStatus: number): number => {
 };
 
 export async function POST(request: NextRequest) {
-  const { user, token } = await validateUserAndToken(request.headers.get('authorization'));
-  if (!user || !token) {
-    return NextResponse.json({ error: 'Not authenticated' }, { status: 403 });
+  const requiresAuth = process.env['NEXT_PUBLIC_APP_PLATFORM'] !== 'tauri';
+  if (requiresAuth) {
+    const { user, token } = await validateUserAndToken(request.headers.get('authorization'));
+    if (!user || !token) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 403 });
+    }
   }
 
   try {
@@ -56,9 +59,12 @@ export async function POST(request: NextRequest) {
       body.responseFormat === 'wav' || body.responseFormat === 'mp3'
         ? body.responseFormat
         : provider.responseFormat || 'mp3';
+    const bodyModel =
+      typeof body.model === 'string' && body.model.trim().length > 0 ? body.model.trim() : null;
+    const providerModel = typeof provider.model === 'string' ? provider.model.trim() : '';
     const synthParams = {
       input: body.input,
-      model: typeof body.model === 'string' ? body.model : provider.model,
+      model: bodyModel || providerModel || undefined,
       voice: typeof body.voice === 'string' ? body.voice : provider.defaultVoice,
       speed: typeof body.speed === 'number' ? body.speed : 1.0,
       responseFormat,

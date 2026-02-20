@@ -13,9 +13,9 @@ export type RemoteTTSSegmentOptions = {
 };
 
 const DEFAULT_OPTIONS: RemoteTTSSegmentOptions = {
-  preferredMaxChars: 260,
+  preferredMaxChars: 90,
   absoluteMaxChars: 500,
-  minCharsPerSegment: 120,
+  minCharsPerSegment: 40,
 };
 
 const STRONG_BREAK_CHARS = new Set(['。', '！', '？', '；', '…', '!', '?', ';']);
@@ -40,11 +40,6 @@ const concatText = (left: string, right: string): string => {
   if (!left) return right;
   if (!right) return left;
   return needSpaceBetween(left, right) ? `${left} ${right}` : `${left}${right}`;
-};
-
-const endsWithStrongBreak = (value: string): boolean => {
-  if (!value) return false;
-  return STRONG_BREAK_CHARS.has(value[value.length - 1]!);
 };
 
 const pickBestBreakIndex = (text: string, limit: number): number => {
@@ -137,39 +132,29 @@ export const buildRemoteTTSSegments = (
     if (!currentText) {
       currentText = normalizedPiece;
       currentAnchor = anchor;
-      if (currentText.length >= preferredMaxChars && endsWithStrongBreak(currentText)) {
-        flush();
-      }
       return;
     }
 
     const candidate = concatText(currentText, normalizedPiece);
     if (candidate.length <= preferredMaxChars) {
       currentText = candidate;
-      if (currentText.length >= minCharsPerSegment && endsWithStrongBreak(currentText)) {
-        flush();
-      }
       return;
     }
 
     if (currentText.length < minCharsPerSegment && candidate.length <= absoluteMaxChars) {
       currentText = candidate;
-      if (endsWithStrongBreak(currentText)) {
-        flush();
-      }
       return;
     }
 
     flush();
     currentText = normalizedPiece;
     currentAnchor = anchor;
-    if (currentText.length >= preferredMaxChars && endsWithStrongBreak(currentText)) {
-      flush();
-    }
   };
 
+  const perPieceLimit = Math.min(preferredMaxChars, absoluteMaxChars);
+
   for (const mark of marks) {
-    const pieces = splitByAbsoluteLimit(mark.text, absoluteMaxChars);
+    const pieces = splitByAbsoluteLimit(mark.text, perPieceLimit);
     for (const piece of pieces) {
       appendPiece(piece, mark);
     }

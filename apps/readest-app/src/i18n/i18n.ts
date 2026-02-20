@@ -1,7 +1,7 @@
 import i18n from 'i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
 import { initReactI18next } from 'react-i18next';
-import { options } from '../../i18next-scanner.config';
+import i18nOptions from '../../i18next-options.json';
 
 const isBrowser = typeof window !== 'undefined';
 
@@ -15,7 +15,7 @@ const initI18n = async () => {
     .use(LanguageDetector)
     .use(initReactI18next)
     .init({
-      supportedLngs: ['en', ...options.lngs],
+      supportedLngs: ['en', ...i18nOptions.lngs],
       fallbackLng: {
         'zh-HK': ['zh-TW', 'en'],
         kk: ['ru', 'en'],
@@ -26,8 +26,8 @@ const initI18n = async () => {
         tt: ['ru', 'en'],
         default: ['en'],
       },
-      ns: options.ns,
-      defaultNS: options.defaultNs,
+      ns: i18nOptions.ns,
+      defaultNS: i18nOptions.defaultNs,
       ...(isBrowser && {
         backend: {
           loadPath: '/locales/{{lng}}/{{ns}}.json',

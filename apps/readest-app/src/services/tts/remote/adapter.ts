@@ -1,6 +1,7 @@
 import { TTSProviderProfile } from '@/types/settings';
 import { REMOTE_TTS_ERROR_CODES, RemoteTTSErrorCode } from '@/services/tts/providerSettings';
 import { TTSVoice } from '@/services/tts/types';
+import { isTauriAppPlatform } from '@/services/environment';
 
 export interface RemoteTTSHealthResult {
   ok: boolean;
@@ -11,8 +12,8 @@ export interface RemoteTTSHealthResult {
 
 export interface RemoteTTSSynthesisParams {
   input: string;
-  model: string;
-  voice: string;
+  model?: string;
+  voice?: string;
   speed?: number;
   responseFormat?: 'mp3' | 'wav';
   stream?: boolean;
@@ -74,10 +75,14 @@ export const fetchJsonWithTimeout = async (
   init: RequestInit,
   timeoutMs: number,
 ): Promise<Response> => {
+  const fetchImpl =
+    typeof window !== 'undefined' && isTauriAppPlatform()
+      ? (await import('@tauri-apps/plugin-http')).fetch
+      : fetch;
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await fetchImpl(input, { ...init, signal: controller.signal });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new RemoteTTSAdapterError(
@@ -101,10 +106,14 @@ export const fetchStreamWithTimeout = async (
   init: RequestInit,
   timeoutMs: number,
 ): Promise<Response> => {
+  const fetchImpl =
+    typeof window !== 'undefined' && isTauriAppPlatform()
+      ? (await import('@tauri-apps/plugin-http')).fetch
+      : fetch;
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await fetchImpl(input, { ...init, signal: controller.signal });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new RemoteTTSAdapterError(

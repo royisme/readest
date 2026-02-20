@@ -59,30 +59,34 @@ const nextConfig = {
           'marked',
         ]),
   ],
-  async headers() {
-    return [
-      {
-        source: '/.well-known/apple-app-site-association',
-        headers: [
-          {
-            key: 'Content-Type',
-            value: 'application/json',
-          },
-        ],
-      },
-      {
-        source: '/_next/static/:path*',
-        headers: [
-          {
-            key: 'Cache-Control',
-            value: isDev
-              ? 'public, max-age=0, must-revalidate'
-              : 'public, max-age=31536000, immutable',
-          },
-        ],
-      },
-    ];
-  },
+  ...(exportOutput
+    ? {}
+    : {
+        async headers() {
+          return [
+            {
+              source: '/.well-known/apple-app-site-association',
+              headers: [
+                {
+                  key: 'Content-Type',
+                  value: 'application/json',
+                },
+              ],
+            },
+            {
+              source: '/_next/static/:path*',
+              headers: [
+                {
+                  key: 'Cache-Control',
+                  value: isDev
+                    ? 'public, max-age=0, must-revalidate'
+                    : 'public, max-age=31536000, immutable',
+                },
+              ],
+            },
+          ];
+        },
+      }),
 };
 
 const pwaDisabled = isDev || appPlatform !== 'web';

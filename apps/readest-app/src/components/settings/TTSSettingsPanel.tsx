@@ -3,13 +3,15 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useEnv } from '@/context/EnvContext';
 import { SettingsPanelPanelProp } from './SettingsDialog';
+import { z } from 'zod';
 import {
   DEFAULT_TTS_SETTINGS,
   normalizeTTSProviderProfile,
   normalizeTTSSettings,
 } from '@/services/tts/providerSettings';
+import { RemoteTTSAdapterError } from '@/services/tts/remote/adapter';
+import { getRemoteTTSAdapter } from '@/services/tts/remote/factory';
 import { TTSAudioFormat, TTSProviderProfile, TTSEngineType, TTSSettings } from '@/types/settings';
-import { fetchWithAuth } from '@/utils/fetch';
 
 type HealthStatus = 'idle' | 'testing' | 'success' | 'error';
 
@@ -26,13 +28,34 @@ type ProviderForm = {
   stream: boolean;
 };
 
+const providerFormSchema = z.object({
+  id: z
+    .string()
+    .trim()
+    .min(1, 'Provider ID is required')
+    .regex(/^[a-zA-Z0-9._-]+$/, 'Provider ID can only contain letters, numbers, ".", "_" and "-"'),
+  name: z.string().trim().min(1, 'Provider name is required'),
+  baseUrl: z.string().trim().url('Base URL must be a valid URL'),
+  apiKey: z.string().trim(),
+  model: z.string().trim(),
+  defaultVoice: z.string().trim(),
+  enabled: z.boolean(),
+  timeoutMs: z.number().int().min(1000, 'Timeout must be at least 1000ms'),
+  responseFormat: z.enum(['mp3', 'wav']),
+  stream: z.boolean(),
+});
+
+type ProviderFormErrorState = Partial<Record<keyof ProviderForm, string>> & {
+  _form?: string;
+};
+
 const createProviderForm = (): ProviderForm => ({
   id: '',
   name: '',
   baseUrl: '',
   apiKey: '',
-  model: 'gpt-4o-mini-tts',
-  defaultVoice: 'alloy',
+  model: '',
+  defaultVoice: '',
   enabled: true,
   timeoutMs: 30000,
   responseFormat: 'mp3',
@@ -70,6 +93,7 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
 
   const [providerForm, setProviderForm] = useState<ProviderForm>(createProviderForm);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [providerFormErrors, setProviderFormErrors] = useState<ProviderFormErrorState>({});
   const [healthStatuses, setHealthStatuses] = useState<Record<string, HealthStatus>>({});
   const [healthMessages, setHealthMessages] = useState<Record<string, string>>({});
 
@@ -83,6 +107,7 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
     persistTTSSettings(DEFAULT_TTS_SETTINGS);
     setProviderForm(createProviderForm());
     setEditingProviderId(null);
+    setProviderFormErrors({});
     setHealthStatuses({});
     setHealthMessages({});
   };
@@ -102,21 +127,60 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
   const resetProviderForm = () => {
     setProviderForm(createProviderForm());
     setEditingProviderId(null);
+    setProviderFormErrors({});
   };
 
   const handleSaveProvider = async () => {
-    const normalizedProvider = toProviderProfile(providerForm);
-    if (!normalizedProvider) return;
+    const candidateId = editingProviderId || providerForm.id.trim() || createProviderId();
+    const parsed = providerFormSchema.safeParse({
+      ...providerForm,
+      id: candidateId,
+    });
+
+    if (!parsed.success) {
+      const fieldErrors = parsed.error.flatten().fieldErrors;
+      setProviderFormErrors({
+        id: fieldErrors.id?.[0],
+        name: fieldErrors.name?.[0],
+        baseUrl: fieldErrors.baseUrl?.[0],
+        apiKey: fieldErrors.apiKey?.[0],
+        model: fieldErrors.model?.[0],
+        defaultVoice: fieldErrors.defaultVoice?.[0],
+        timeoutMs: fieldErrors.timeoutMs?.[0],
+        responseFormat: fieldErrors.responseFormat?.[0],
+        stream: fieldErrors.stream?.[0],
+      });
+      return;
+    }
+
+    if (
+      editingProviderId === null &&
+      ttsSettings.providers.some((item) => item.id === parsed.data.id)
+    ) {
+      setProviderFormErrors({ id: _('Provider ID already exists') });
+      return;
+    }
+
+    const normalizedProvider = toProviderProfile(parsed.data);
+    if (!normalizedProvider) {
+      setProviderFormErrors({
+        _form: _('Invalid provider configuration'),
+      });
+      return;
+    }
 
     const provider =
       editingProviderId === null
         ? {
             ...normalizedProvider,
-            id: normalizedProvider.id || createProviderId(),
+            id: parsed.data.id,
           }
         : {
             ...normalizedProvider,
             id: editingProviderId,
+            cachedVoices:
+              ttsSettings.providers.find((item) => item.id === editingProviderId)?.cachedVoices ||
+              normalizedProvider.cachedVoices,
           };
 
     const providers =
@@ -135,6 +199,7 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
       providers,
       activeProviderId,
     });
+    setProviderFormErrors({});
     resetProviderForm();
   };
 
@@ -156,6 +221,7 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
 
   const handleEditProvider = (provider: TTSProviderProfile) => {
     setEditingProviderId(provider.id);
+    setProviderFormErrors({});
     setProviderForm({
       id: provider.id,
       name: provider.name,
@@ -181,25 +247,66 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
     setHealthStatuses((prev) => ({ ...prev, [provider.id]: 'testing' }));
     setHealthMessages((prev) => ({ ...prev, [provider.id]: '' }));
     try {
-      const response = await fetchWithAuth('/api/tts/remote/health', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider }),
-      });
-      const payload = await response.json();
+      const adapter = getRemoteTTSAdapter(provider);
+      const result = await adapter.health(provider);
+      const voices = await adapter.listVoices(provider);
+      const normalizedVoices = voices.map((voice) => ({
+        id: voice.id,
+        name: voice.name || voice.id,
+        lang: voice.lang || 'en',
+      }));
+      const hasCurrentDefault = normalizedVoices.some(
+        (voice) => voice.id === provider.defaultVoice,
+      );
+      const nextDefaultVoice =
+        hasCurrentDefault || !normalizedVoices.length
+          ? provider.defaultVoice
+          : normalizedVoices[0]!.id;
+      const providerUpdated =
+        !hasCurrentDefault ||
+        !provider.cachedVoices ||
+        provider.cachedVoices.length !== normalizedVoices.length ||
+        provider.cachedVoices.some(
+          (voice, idx) =>
+            voice.id !== normalizedVoices[idx]?.id ||
+            voice.name !== normalizedVoices[idx]?.name ||
+            voice.lang !== normalizedVoices[idx]?.lang,
+        );
+
+      if (providerUpdated || nextDefaultVoice !== provider.defaultVoice) {
+        const providers = ttsSettings.providers.map((item) =>
+          item.id === provider.id
+            ? {
+                ...item,
+                cachedVoices: normalizedVoices,
+                defaultVoice: nextDefaultVoice,
+              }
+            : item,
+        );
+        await persistTTSSettings({
+          ...ttsSettings,
+          providers,
+        });
+      }
+
       setHealthStatuses((prev) => ({ ...prev, [provider.id]: 'success' }));
       setHealthMessages((prev) => ({
         ...prev,
         [provider.id]:
-          payload?.result?.latencyMs !== undefined
-            ? `${_('Latency')}: ${payload.result.latencyMs}ms`
+          result?.latencyMs !== undefined
+            ? `${_('Latency')}: ${result.latencyMs}ms · ${_('Voices')}: ${normalizedVoices.length}`
             : _('Connected'),
       }));
     } catch (error) {
       setHealthStatuses((prev) => ({ ...prev, [provider.id]: 'error' }));
       setHealthMessages((prev) => ({
         ...prev,
-        [provider.id]: error instanceof Error ? error.message : _('Connection failed'),
+        [provider.id]:
+          error instanceof RemoteTTSAdapterError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : _('Connection failed'),
       }));
     }
   };
@@ -234,7 +341,7 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
             ) : (
               ttsSettings.providers.map((provider) => (
                 <div key={provider.id} className='p-3'>
-                  <div className='flex items-center justify-between gap-2'>
+                  <div className='flex flex-wrap items-start justify-between gap-2'>
                     <div className='min-w-0'>
                       <div className='truncate font-medium'>{provider.name}</div>
                       <div className='text-base-content/60 truncate text-xs'>
@@ -246,22 +353,22 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
                         }`}
                       </div>
                     </div>
-                    <div className='flex items-center gap-2'>
+                    <div className='flex shrink-0 flex-wrap items-center justify-end gap-2'>
                       <button
-                        className='btn btn-xs'
+                        className='btn btn-xs whitespace-nowrap'
                         onClick={() => handleActivateProvider(provider.id)}
                         disabled={ttsSettings.activeProviderId === provider.id}
                       >
                         {ttsSettings.activeProviderId === provider.id ? _('Active') : _('Use')}
                       </button>
                       <button
-                        className='btn btn-ghost btn-xs'
+                        className='btn btn-ghost btn-xs whitespace-nowrap'
                         onClick={() => handleEditProvider(provider)}
                       >
                         {_('Edit')}
                       </button>
                       <button
-                        className='btn btn-ghost btn-xs text-red-500'
+                        className='btn btn-ghost btn-xs whitespace-nowrap text-red-500'
                         onClick={() => handleDeleteProvider(provider.id)}
                       >
                         {_('Delete')}
@@ -302,45 +409,81 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
           {editingProviderId ? _('Edit Provider') : _('Add Provider')}
         </h2>
         <div className='card border-base-200 bg-base-100 border p-3 shadow'>
+          {providerFormErrors._form && (
+            <div className='mb-2 text-xs text-red-500'>{providerFormErrors._form}</div>
+          )}
           <div className='grid grid-cols-1 gap-2 sm:grid-cols-2'>
             <input
               className='input input-bordered input-sm'
               placeholder={_('Provider Name')}
               value={providerForm.name}
-              onChange={(e) => setProviderForm((prev) => ({ ...prev, name: e.target.value }))}
+              onChange={(e) => {
+                setProviderForm((prev) => ({ ...prev, name: e.target.value }));
+                setProviderFormErrors((prev) => ({ ...prev, name: undefined, _form: undefined }));
+              }}
             />
+            {providerFormErrors.name && (
+              <div className='text-xs text-red-500 sm:col-span-2'>{providerFormErrors.name}</div>
+            )}
             <input
               className='input input-bordered input-sm'
               placeholder={_('Provider ID (optional)')}
               value={providerForm.id}
-              onChange={(e) => setProviderForm((prev) => ({ ...prev, id: e.target.value }))}
+              onChange={(e) => {
+                setProviderForm((prev) => ({ ...prev, id: e.target.value }));
+                setProviderFormErrors((prev) => ({ ...prev, id: undefined, _form: undefined }));
+              }}
             />
+            {providerFormErrors.id && (
+              <div className='text-xs text-red-500 sm:col-span-2'>{providerFormErrors.id}</div>
+            )}
             <input
               className='input input-bordered input-sm sm:col-span-2'
               placeholder='https://api.example.com/v1'
               value={providerForm.baseUrl}
-              onChange={(e) => setProviderForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
+              onChange={(e) => {
+                setProviderForm((prev) => ({ ...prev, baseUrl: e.target.value }));
+                setProviderFormErrors((prev) => ({
+                  ...prev,
+                  baseUrl: undefined,
+                  _form: undefined,
+                }));
+              }}
             />
+            {providerFormErrors.baseUrl && (
+              <div className='text-xs text-red-500 sm:col-span-2'>{providerFormErrors.baseUrl}</div>
+            )}
             <input
               className='input input-bordered input-sm sm:col-span-2'
               type='password'
               placeholder={_('API Key')}
               value={providerForm.apiKey}
-              onChange={(e) => setProviderForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+              onChange={(e) => {
+                setProviderForm((prev) => ({ ...prev, apiKey: e.target.value }));
+                setProviderFormErrors((prev) => ({ ...prev, apiKey: undefined, _form: undefined }));
+              }}
             />
             <input
               className='input input-bordered input-sm'
               placeholder={_('Model')}
               value={providerForm.model}
-              onChange={(e) => setProviderForm((prev) => ({ ...prev, model: e.target.value }))}
+              onChange={(e) => {
+                setProviderForm((prev) => ({ ...prev, model: e.target.value }));
+                setProviderFormErrors((prev) => ({ ...prev, model: undefined, _form: undefined }));
+              }}
             />
             <input
               className='input input-bordered input-sm'
               placeholder={_('Default Voice')}
               value={providerForm.defaultVoice}
-              onChange={(e) =>
-                setProviderForm((prev) => ({ ...prev, defaultVoice: e.target.value }))
-              }
+              onChange={(e) => {
+                setProviderForm((prev) => ({ ...prev, defaultVoice: e.target.value }));
+                setProviderFormErrors((prev) => ({
+                  ...prev,
+                  defaultVoice: undefined,
+                  _form: undefined,
+                }));
+              }}
             />
             <input
               className='input input-bordered input-sm'
@@ -349,10 +492,23 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
               step={1000}
               placeholder={_('Timeout (ms)')}
               value={providerForm.timeoutMs}
-              onChange={(e) =>
-                setProviderForm((prev) => ({ ...prev, timeoutMs: Number(e.target.value) || 30000 }))
-              }
+              onChange={(e) => {
+                setProviderForm((prev) => ({
+                  ...prev,
+                  timeoutMs: Number(e.target.value) || 30000,
+                }));
+                setProviderFormErrors((prev) => ({
+                  ...prev,
+                  timeoutMs: undefined,
+                  _form: undefined,
+                }));
+              }}
             />
+            {providerFormErrors.timeoutMs && (
+              <div className='text-xs text-red-500 sm:col-span-2'>
+                {providerFormErrors.timeoutMs}
+              </div>
+            )}
             <label className='label cursor-pointer justify-start gap-2'>
               <input
                 type='checkbox'
