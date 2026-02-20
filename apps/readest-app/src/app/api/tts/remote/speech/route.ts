@@ -52,13 +52,34 @@ export async function POST(request: NextRequest) {
     }
 
     const adapter = getRemoteTTSAdapter(provider);
-    const result = await adapter.synthesize(provider, {
+    const responseFormat =
+      body.responseFormat === 'wav' || body.responseFormat === 'mp3'
+        ? body.responseFormat
+        : provider.responseFormat || 'mp3';
+    const synthParams = {
       input: body.input,
       model: typeof body.model === 'string' ? body.model : provider.model,
       voice: typeof body.voice === 'string' ? body.voice : provider.defaultVoice,
       speed: typeof body.speed === 'number' ? body.speed : 1.0,
-      responseFormat: body.responseFormat === 'wav' ? 'wav' : 'mp3',
-    });
+      responseFormat,
+      stream: typeof body.stream === 'boolean' ? body.stream : !!provider.stream,
+    };
+
+    if (synthParams.stream) {
+      const upstream = await adapter.synthesizeStream(provider, synthParams);
+      const headers = new Headers();
+      const contentType = upstream.headers.get('content-type');
+      if (contentType) headers.set('Content-Type', contentType);
+      const sampleRate = upstream.headers.get('x-sample-rate');
+      if (sampleRate) headers.set('x-sample-rate', sampleRate);
+      const channels = upstream.headers.get('x-channels');
+      if (channels) headers.set('x-channels', channels);
+      const sampleFormat = upstream.headers.get('x-sample-format');
+      if (sampleFormat) headers.set('x-sample-format', sampleFormat);
+      return new NextResponse(upstream.body, { status: 200, headers });
+    }
+
+    const result = await adapter.synthesize(provider, synthParams);
 
     return new NextResponse(result.data, {
       status: 200,

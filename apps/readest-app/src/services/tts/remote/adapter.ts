@@ -15,6 +15,7 @@ export interface RemoteTTSSynthesisParams {
   voice: string;
   speed?: number;
   responseFormat?: 'mp3' | 'wav';
+  stream?: boolean;
 }
 
 export interface RemoteTTSSynthesisResult {
@@ -40,6 +41,10 @@ export interface RemoteTTSAdapter {
   readonly type: TTSProviderProfile['type'];
   health(provider: TTSProviderProfile): Promise<RemoteTTSHealthResult>;
   listVoices(provider: TTSProviderProfile, lang?: string): Promise<TTSVoice[]>;
+  synthesizeStream(
+    provider: TTSProviderProfile,
+    params: RemoteTTSSynthesisParams,
+  ): Promise<Response>;
   synthesize(
     provider: TTSProviderProfile,
     params: RemoteTTSSynthesisParams,
@@ -65,6 +70,33 @@ const safeJsonParse = async (response: Response): Promise<unknown> => {
 };
 
 export const fetchJsonWithTimeout = async (
+  input: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new RemoteTTSAdapterError(
+        REMOTE_TTS_ERROR_CODES.Timeout,
+        `Request timed out after ${timeoutMs}ms`,
+        504,
+      );
+    }
+    throw new RemoteTTSAdapterError(
+      REMOTE_TTS_ERROR_CODES.NetworkError,
+      error instanceof Error ? error.message : 'Network request failed',
+      502,
+    );
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+};
+
+export const fetchStreamWithTimeout = async (
   input: string,
   init: RequestInit,
   timeoutMs: number,

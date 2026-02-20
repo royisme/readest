@@ -52,6 +52,8 @@ describe('providerSettings', () => {
             empty: '',
           },
           timeoutMs: 5000,
+          responseFormat: 'wav',
+          stream: true,
         },
         {
           id: '',
@@ -65,6 +67,8 @@ describe('providerSettings', () => {
 
     expect(normalized.providers).toHaveLength(1);
     expect(normalized.providers[0]?.headers).toEqual({ 'x-project': 'readest' });
+    expect(normalized.providers[0]?.responseFormat).toBe('wav');
+    expect(normalized.providers[0]?.stream).toBe(true);
     expect(normalized.activeProviderId).toBeNull();
   });
 

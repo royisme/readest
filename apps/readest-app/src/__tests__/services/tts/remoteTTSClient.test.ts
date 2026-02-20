@@ -23,9 +23,12 @@ class MockAudio {
 describe('RemoteTTSClient', () => {
   beforeEach(() => {
     fetchWithAuthMock.mockReset();
-    fetchWithAuthMock.mockResolvedValue({
-      arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
-    });
+    fetchWithAuthMock.mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3, 4]), {
+        status: 200,
+        headers: { 'Content-Type': 'audio/mpeg' },
+      }),
+    );
 
     vi.stubGlobal('Audio', MockAudio as unknown as typeof Audio);
     vi.stubGlobal('URL', {
@@ -95,9 +98,10 @@ describe('RemoteTTSClient', () => {
       maxInFlight = Math.max(maxInFlight, inFlight);
       await new Promise((resolve) => setTimeout(resolve, 10));
       inFlight -= 1;
-      return {
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
-      };
+      return new Response(new Uint8Array([1, 2, 3, 4]), {
+        status: 200,
+        headers: { 'Content-Type': 'audio/mpeg' },
+      });
     });
 
     const controller = { dispatchSpeakMark } as unknown as TTSController;

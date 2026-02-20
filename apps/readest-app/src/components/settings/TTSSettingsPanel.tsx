@@ -8,7 +8,7 @@ import {
   normalizeTTSProviderProfile,
   normalizeTTSSettings,
 } from '@/services/tts/providerSettings';
-import { TTSProviderProfile, TTSEngineType, TTSSettings } from '@/types/settings';
+import { TTSAudioFormat, TTSProviderProfile, TTSEngineType, TTSSettings } from '@/types/settings';
 import { fetchWithAuth } from '@/utils/fetch';
 
 type HealthStatus = 'idle' | 'testing' | 'success' | 'error';
@@ -22,6 +22,8 @@ type ProviderForm = {
   defaultVoice: string;
   enabled: boolean;
   timeoutMs: number;
+  responseFormat: TTSAudioFormat;
+  stream: boolean;
 };
 
 const createProviderForm = (): ProviderForm => ({
@@ -33,6 +35,8 @@ const createProviderForm = (): ProviderForm => ({
   defaultVoice: 'alloy',
   enabled: true,
   timeoutMs: 30000,
+  responseFormat: 'mp3',
+  stream: false,
 });
 
 const toProviderProfile = (form: ProviderForm): TTSProviderProfile | null => {
@@ -46,6 +50,8 @@ const toProviderProfile = (form: ProviderForm): TTSProviderProfile | null => {
     defaultVoice: form.defaultVoice.trim(),
     enabled: form.enabled,
     timeoutMs: form.timeoutMs,
+    responseFormat: form.responseFormat,
+    stream: form.stream,
   });
 };
 
@@ -159,6 +165,8 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
       defaultVoice: provider.defaultVoice,
       enabled: provider.enabled,
       timeoutMs: provider.timeoutMs || 30000,
+      responseFormat: provider.responseFormat || 'mp3',
+      stream: !!provider.stream,
     });
   };
 
@@ -231,6 +239,11 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
                       <div className='truncate font-medium'>{provider.name}</div>
                       <div className='text-base-content/60 truncate text-xs'>
                         {provider.baseUrl}
+                      </div>
+                      <div className='text-base-content/50 text-[11px]'>
+                        {`Format: ${(provider.responseFormat || 'mp3').toUpperCase()} · Stream: ${
+                          provider.stream ? 'on' : 'off'
+                        }`}
                       </div>
                     </div>
                     <div className='flex items-center gap-2'>
@@ -350,6 +363,28 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
                 }
               />
               <span>{_('Enabled')}</span>
+            </label>
+            <select
+              className='select select-bordered select-sm'
+              value={providerForm.responseFormat}
+              onChange={(e) =>
+                setProviderForm((prev) => ({
+                  ...prev,
+                  responseFormat: e.target.value as TTSAudioFormat,
+                }))
+              }
+            >
+              <option value='mp3'>MP3</option>
+              <option value='wav'>WAV</option>
+            </select>
+            <label className='label cursor-pointer justify-start gap-2'>
+              <input
+                type='checkbox'
+                className='toggle toggle-sm'
+                checked={providerForm.stream}
+                onChange={(e) => setProviderForm((prev) => ({ ...prev, stream: e.target.checked }))}
+              />
+              <span>{_('Stream mode')}</span>
             </label>
           </div>
           <div className='mt-3 flex gap-2'>

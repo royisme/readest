@@ -36,6 +36,7 @@ export type KOSyncChecksumMethod = 'binary' | 'filename';
 export type KOSyncStrategy = 'prompt' | 'silent' | 'send' | 'receive';
 export type TTSEngineType = 'edge-tts' | 'web-speech' | 'native-tts' | 'remote-tts';
 export type TTSProviderType = 'openai_compatible';
+export type TTSAudioFormat = 'mp3' | 'wav';
 
 export interface TTSProviderProfile {
   id: string;
@@ -48,6 +49,8 @@ export interface TTSProviderProfile {
   enabled: boolean;
   headers?: Record<string, string>;
   timeoutMs?: number;
+  responseFormat?: TTSAudioFormat;
+  stream?: boolean;
 }
 
 export interface TTSSettings {

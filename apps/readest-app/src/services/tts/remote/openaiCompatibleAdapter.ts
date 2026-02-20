@@ -4,6 +4,7 @@ import { TTSVoice } from '@/services/tts/types';
 import {
   assertOkResponse,
   fetchJsonWithTimeout,
+  fetchStreamWithTimeout,
   RemoteTTSAdapter,
   RemoteTTSAdapterError,
   RemoteTTSHealthResult,
@@ -105,6 +106,50 @@ export class OpenAICompatibleAdapter implements RemoteTTSAdapter {
     }));
   }
 
+  private buildSpeechPayload(provider: TTSProviderProfile, params: RemoteTTSSynthesisParams) {
+    const model = params.model || provider.model;
+    const voice = params.voice || provider.defaultVoice;
+    if (!params.input || !model || !voice) {
+      throw new RemoteTTSAdapterError(
+        REMOTE_TTS_ERROR_CODES.InvalidRequest,
+        'input, model and voice are required',
+        400,
+      );
+    }
+    return {
+      model,
+      input: params.input,
+      voice,
+      speed: params.speed ?? 1.0,
+      response_format: params.responseFormat ?? 'mp3',
+      stream: params.stream === true,
+    };
+  }
+
+  async synthesizeStream(provider: TTSProviderProfile, params: RemoteTTSSynthesisParams) {
+    const timeoutMs = provider.timeoutMs ?? 30000;
+    const baseUrl = trimTrailingSlash(provider.baseUrl);
+    if (!baseUrl) {
+      throw new RemoteTTSAdapterError(
+        REMOTE_TTS_ERROR_CODES.InvalidProvider,
+        'Provider baseUrl is required',
+        400,
+      );
+    }
+
+    const response = await fetchStreamWithTimeout(
+      `${baseUrl}/audio/speech`,
+      {
+        method: 'POST',
+        headers: buildHeaders(provider),
+        body: JSON.stringify(this.buildSpeechPayload(provider, params)),
+      },
+      timeoutMs,
+    );
+    await assertOkResponse(response);
+    return response;
+  }
+
   async synthesize(
     provider: TTSProviderProfile,
     params: RemoteTTSSynthesisParams,
@@ -119,28 +164,12 @@ export class OpenAICompatibleAdapter implements RemoteTTSAdapter {
       );
     }
 
-    const model = params.model || provider.model;
-    const voice = params.voice || provider.defaultVoice;
-    if (!params.input || !model || !voice) {
-      throw new RemoteTTSAdapterError(
-        REMOTE_TTS_ERROR_CODES.InvalidRequest,
-        'input, model and voice are required',
-        400,
-      );
-    }
-
     const response = await fetchJsonWithTimeout(
       `${baseUrl}/audio/speech`,
       {
         method: 'POST',
         headers: buildHeaders(provider),
-        body: JSON.stringify({
-          model,
-          input: params.input,
-          voice,
-          speed: params.speed ?? 1.0,
-          response_format: params.responseFormat ?? 'mp3',
-        }),
+        body: JSON.stringify(this.buildSpeechPayload(provider, params)),
       },
       timeoutMs,
     );

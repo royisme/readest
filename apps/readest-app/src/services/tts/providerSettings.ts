@@ -6,6 +6,7 @@ const LEGACY_PREFERRED_CLIENT_KEY = 'preferredClient';
 const VALID_ENGINES: TTSEngineType[] = ['edge-tts', 'web-speech', 'native-tts', 'remote-tts'];
 const VALID_PROVIDER_TYPES: TTSProviderType[] = ['openai_compatible'];
 const DEFAULT_TIMEOUT_MS = 30000;
+const VALID_RESPONSE_FORMATS = ['mp3', 'wav'] as const;
 
 export const REMOTE_TTS_ERROR_CODES = {
   InvalidRequest: 'invalid_request',
@@ -65,6 +66,14 @@ export const normalizeTTSProviderProfile = (value: unknown): TTSProviderProfile 
     value['timeoutMs'] > 0
       ? value['timeoutMs']
       : DEFAULT_TIMEOUT_MS;
+  const responseFormatRaw =
+    typeof value['responseFormat'] === 'string' ? value['responseFormat'].toLowerCase() : 'mp3';
+  const responseFormat = VALID_RESPONSE_FORMATS.includes(
+    responseFormatRaw as (typeof VALID_RESPONSE_FORMATS)[number],
+  )
+    ? (responseFormatRaw as (typeof VALID_RESPONSE_FORMATS)[number])
+    : 'mp3';
+  const stream = value['stream'] === true;
 
   if (!id || !name || !baseUrl) return null;
   if (!VALID_PROVIDER_TYPES.includes(type as TTSProviderType)) return null;
@@ -80,6 +89,8 @@ export const normalizeTTSProviderProfile = (value: unknown): TTSProviderProfile 
     enabled,
     timeoutMs,
     headers: normalizeHeaderRecord(value['headers']),
+    responseFormat,
+    stream,
   };
 };
 

@@ -90,9 +90,11 @@ export class RemoteTTSClient implements TTSClient {
     const decoded = decodeRemoteVoiceId(this.#currentVoiceId);
     const selectedVoice =
       decoded && decoded.providerId === provider.id ? decoded.voiceId : provider.defaultVoice;
+    const responseFormat = provider.responseFormat || 'mp3';
+    const stream = !!provider.stream;
 
-    const requestAudioBuffer = async (segmentText: string): Promise<ArrayBuffer> => {
-      const response = await fetchWithAuth('/api/tts/remote/speech', {
+    const requestAudioResponse = async (segmentText: string): Promise<Response> => {
+      return await fetchWithAuth('/api/tts/remote/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -101,14 +103,193 @@ export class RemoteTTSClient implements TTSClient {
           model: provider.model,
           voice: selectedVoice,
           speed: this.#rate,
-          responseFormat: 'mp3',
+          responseFormat,
+          stream,
         }),
       });
-      return await response.arrayBuffer();
     };
 
-    const audioBufferPromises = new Map<number, Promise<ArrayBuffer>>();
-    const getOrCreateAudioPromise = (index: number): Promise<ArrayBuffer> => {
+    const normalizeMimeType = (contentType: string, fallback: 'audio/mpeg' | 'audio/wav') => {
+      return contentType.split(';')[0]?.trim() || fallback;
+    };
+
+    const playBufferedResponse = async (response: Response) => {
+      const mimeType = normalizeMimeType(
+        response.headers.get('content-type') || '',
+        responseFormat === 'wav' ? 'audio/wav' : 'audio/mpeg',
+      );
+      const data = await response.arrayBuffer();
+      const blob = new Blob([data], { type: mimeType });
+      const audioUrl = URL.createObjectURL(blob);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const audio = new Audio(audioUrl);
+          audio.onended = () => resolve();
+          audio.onerror = () => reject(new Error('Audio playback error'));
+          audio.playbackRate = this.#rate;
+          audio.play().catch(reject);
+        });
+      } finally {
+        URL.revokeObjectURL(audioUrl);
+      }
+    };
+
+    const playStreamedResponse = async (response: Response) => {
+      const fallbackMime = responseFormat === 'wav' ? 'audio/wav' : 'audio/mpeg';
+      const mimeType = normalizeMimeType(response.headers.get('content-type') || '', fallbackMime);
+      const body = response.body;
+      const canUseStreamPlayback =
+        !!body &&
+        typeof window !== 'undefined' &&
+        'MediaSource' in window &&
+        typeof MediaSource !== 'undefined' &&
+        MediaSource.isTypeSupported(mimeType);
+
+      if (!canUseStreamPlayback) {
+        await playBufferedResponse(response);
+        return;
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const mediaSource = new MediaSource();
+        const audio = new Audio();
+        const objectUrl = URL.createObjectURL(mediaSource);
+        const reader = body.getReader();
+        const chunkQueue: Uint8Array[] = [];
+        let sourceBuffer: SourceBuffer | null = null;
+        let streamDone = false;
+        let finished = false;
+
+        const cleanup = () => {
+          if (finished) return;
+          finished = true;
+          audio.onended = null;
+          audio.onerror = null;
+          URL.revokeObjectURL(objectUrl);
+          reader.cancel().catch(() => {});
+        };
+
+        const fail = (error: unknown) => {
+          cleanup();
+          reject(error instanceof Error ? error : new Error('Audio stream playback error'));
+        };
+
+        const finalizeStream = () => {
+          if (!sourceBuffer || sourceBuffer.updating || !streamDone) return;
+          if (mediaSource.readyState === 'open') {
+            try {
+              mediaSource.endOfStream();
+            } catch {}
+          }
+        };
+
+        const flushQueue = () => {
+          if (!sourceBuffer || sourceBuffer.updating || chunkQueue.length === 0) return;
+          try {
+            sourceBuffer.appendBuffer(chunkQueue.shift()!);
+          } catch (error) {
+            fail(error);
+          }
+        };
+
+        signal.addEventListener('abort', () => {
+          cleanup();
+          reject(new Error('Aborted'));
+        });
+
+        audio.onended = () => {
+          cleanup();
+          resolve();
+        };
+        audio.onerror = () => fail(new Error('Audio playback error'));
+        audio.src = objectUrl;
+        audio.playbackRate = this.#rate;
+
+        mediaSource.addEventListener('sourceopen', () => {
+          try {
+            sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+            sourceBuffer.mode = 'sequence';
+            sourceBuffer.addEventListener('updateend', () => {
+              flushQueue();
+              finalizeStream();
+            });
+            audio.play().catch((error) => fail(error));
+
+            (async () => {
+              try {
+                while (true) {
+                  if (signal.aborted || this.#isStopped) {
+                    cleanup();
+                    reject(new Error('Aborted'));
+                    return;
+                  }
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  if (value) {
+                    chunkQueue.push(value);
+                    flushQueue();
+                  }
+                }
+                streamDone = true;
+                finalizeStream();
+              } catch (error) {
+                fail(error);
+              }
+            })();
+          } catch (error) {
+            fail(error);
+          }
+        });
+      });
+    };
+
+    if (stream) {
+      for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex++) {
+        const segment = segments[segmentIndex]!;
+        if (signal.aborted || this.#isStopped) {
+          yield { code: 'error', message: 'Aborted' };
+          return;
+        }
+        this.#speakingLang = segment.language || this.#primaryLang;
+        this.controller?.dispatchSpeakMark(segment.anchorMark);
+        yield {
+          code: 'boundary',
+          mark: segment.anchorMark.name,
+          message: `Start chunk: ${segment.anchorMark.name}`,
+        };
+
+        try {
+          const response = await requestAudioResponse(segment.text);
+          await playStreamedResponse(response);
+        } catch (error) {
+          yield {
+            code: 'error',
+            message: error instanceof Error ? error.message : 'Remote TTS failed',
+          };
+          return;
+        }
+      }
+      yield { code: 'end', message: 'Speech finished' };
+      return;
+    }
+
+    const requestAudioBuffer = async (
+      segmentText: string,
+    ): Promise<{ data: ArrayBuffer; contentType: string }> => {
+      const response = await requestAudioResponse(segmentText);
+      return {
+        data: await response.arrayBuffer(),
+        contentType: response.headers.get('content-type') || '',
+      };
+    };
+
+    const audioBufferPromises = new Map<
+      number,
+      Promise<{ data: ArrayBuffer; contentType: string }>
+    >();
+    const getOrCreateAudioPromise = (
+      index: number,
+    ): Promise<{ data: ArrayBuffer; contentType: string }> => {
       if (audioBufferPromises.has(index)) {
         return audioBufferPromises.get(index)!;
       }
@@ -150,14 +331,18 @@ export class RemoteTTSClient implements TTSClient {
 
       try {
         warmupAudioRequests(segmentIndex + 1);
-        const audioBuffer = await getOrCreateAudioPromise(segmentIndex);
+        const audioBufferResult = await getOrCreateAudioPromise(segmentIndex);
         audioBufferPromises.delete(segmentIndex);
         if (signal.aborted || this.#isStopped) {
           yield { code: 'error', message: 'Aborted' };
           return;
         }
 
-        const blob = new Blob([audioBuffer], { type: 'audio/mpeg' });
+        const mimeType = normalizeMimeType(
+          audioBufferResult.contentType,
+          responseFormat === 'wav' ? 'audio/wav' : 'audio/mpeg',
+        );
+        const blob = new Blob([audioBufferResult.data], { type: mimeType });
         const audioUrl = URL.createObjectURL(blob);
         try {
           await new Promise<void>((resolve, reject) => {

@@ -100,4 +100,25 @@ describe('OpenAICompatibleAdapter', () => {
     });
     expect(result.data.byteLength).toBe(4);
   });
+
+  it('passes stream flag to upstream payload', async () => {
+    const adapter = new OpenAICompatibleAdapter();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(new Uint8Array([1]), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await adapter.synthesize(buildProvider(), {
+      input: 'hello',
+      model: 'gpt-4o-mini-tts',
+      voice: 'alloy',
+      responseFormat: 'wav',
+      stream: true,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(init.body));
+    expect(payload.response_format).toBe('wav');
+    expect(payload.stream).toBe(true);
+  });
 });

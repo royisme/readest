@@ -57,6 +57,7 @@ describe('/api/tts/remote/* routes', () => {
         models: ['gpt-4o-mini-tts'],
       }),
       listVoices: vi.fn(),
+      synthesizeStream: vi.fn(),
       synthesize: vi.fn(),
     });
 
@@ -85,6 +86,7 @@ describe('/api/tts/remote/* routes', () => {
         { id: 'alloy', name: 'alloy', lang: 'en-US' },
         { id: 'nova', name: 'nova', lang: 'en-US' },
       ]),
+      synthesizeStream: vi.fn(),
       synthesize: vi.fn(),
     });
 
@@ -123,6 +125,7 @@ describe('/api/tts/remote/* routes', () => {
       type: 'openai_compatible',
       health: vi.fn(),
       listVoices: vi.fn(),
+      synthesizeStream: vi.fn(),
       synthesize: vi
         .fn()
         .mockRejectedValue(
@@ -154,6 +157,7 @@ describe('/api/tts/remote/* routes', () => {
       type: 'openai_compatible',
       health: vi.fn(),
       listVoices: vi.fn(),
+      synthesizeStream: vi.fn(),
       synthesize: vi.fn().mockResolvedValue({
         contentType: 'audio/mpeg',
         data: new Uint8Array([1, 2, 3]).buffer,
@@ -173,5 +177,87 @@ describe('/api/tts/remote/* routes', () => {
     expect(response.headers.get('content-type')).toContain('audio');
     const arrayBuffer = await response.arrayBuffer();
     expect(arrayBuffer.byteLength).toBe(3);
+  });
+
+  it('speech forwards responseFormat and stream to adapter', async () => {
+    mockedValidateUserAndToken.mockResolvedValue({ user: { id: 'u' } as never, token: 't' });
+    const synthesize = vi.fn();
+    const synthesizeStream = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(new Uint8Array([1, 2]), { headers: { 'Content-Type': 'audio/wav' } }),
+      );
+    mockedGetRemoteTTSAdapter.mockReturnValue({
+      type: 'openai_compatible',
+      health: vi.fn(),
+      listVoices: vi.fn(),
+      synthesizeStream,
+      synthesize,
+    });
+
+    const request = new NextRequest('http://localhost:3000/api/tts/remote/speech', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer test-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        provider: { ...providerPayload, responseFormat: 'wav', stream: true },
+        input: 'hello',
+        responseFormat: 'wav',
+        stream: true,
+      }),
+    });
+
+    const response = await speechPost(request);
+    expect(response.status).toBe(200);
+    expect(synthesizeStream).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        responseFormat: 'wav',
+        stream: true,
+      }),
+    );
+    expect(synthesize).not.toHaveBeenCalled();
+  });
+
+  it('speech returns streamed body when stream mode is enabled', async () => {
+    mockedValidateUserAndToken.mockResolvedValue({ user: { id: 'u' } as never, token: 't' });
+    mockedGetRemoteTTSAdapter.mockReturnValue({
+      type: 'openai_compatible',
+      health: vi.fn(),
+      listVoices: vi.fn(),
+      synthesize: vi.fn(),
+      synthesizeStream: vi.fn().mockResolvedValue(
+        new Response(new Uint8Array([9, 8, 7]), {
+          status: 200,
+          headers: {
+            'Content-Type': 'audio/wav',
+            'x-sample-rate': '44100',
+          },
+        }),
+      ),
+    });
+
+    const request = new NextRequest('http://localhost:3000/api/tts/remote/speech', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer test-token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        provider: { ...providerPayload, stream: true, responseFormat: 'wav' },
+        input: 'hello',
+        stream: true,
+        responseFormat: 'wav',
+      }),
+    });
+
+    const response = await speechPost(request);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('audio/wav');
+    expect(response.headers.get('x-sample-rate')).toBe('44100');
+    const data = await response.arrayBuffer();
+    expect(data.byteLength).toBe(3);
   });
 });
