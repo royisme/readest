@@ -7,6 +7,10 @@ const VALID_ENGINES: TTSEngineType[] = ['edge-tts', 'web-speech', 'native-tts', 
 const VALID_PROVIDER_TYPES: TTSProviderType[] = ['openai_compatible'];
 const DEFAULT_TIMEOUT_MS = 30000;
 const VALID_RESPONSE_FORMATS = ['mp3', 'wav'] as const;
+export const DEFAULT_REMOTE_CHUNK_MAX_SENTENCES = 5;
+export const DEFAULT_REMOTE_CHUNK_TARGET_CHARS = 160;
+export const DEFAULT_REMOTE_CHUNK_HARD_LIMIT_CHARS = 240;
+export const DEFAULT_REMOTE_QUEUE_TARGET_SIZE = 4;
 
 export const REMOTE_TTS_ERROR_CODES = {
   InvalidRequest: 'invalid_request',
@@ -37,6 +41,21 @@ export const mapLegacyClientToEngine = (legacyClient: string | null | undefined)
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null;
+};
+
+const normalizeOptionalNumberInRange = (
+  value: unknown,
+  min: number,
+  max: number,
+): number | undefined => {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(numeric)) return undefined;
+  return Math.min(max, Math.max(min, Math.round(numeric)));
 };
 
 const normalizeHeaderRecord = (value: unknown): Record<string, string> | undefined => {
@@ -95,6 +114,30 @@ export const normalizeTTSProviderProfile = (value: unknown): TTSProviderProfile 
     ? (responseFormatRaw as (typeof VALID_RESPONSE_FORMATS)[number])
     : 'mp3';
   const stream = value['stream'] === true;
+  const remoteChunkMaxSentences = normalizeOptionalNumberInRange(
+    value['remoteChunkMaxSentences'],
+    1,
+    8,
+  );
+  const remoteChunkTargetChars = normalizeOptionalNumberInRange(
+    value['remoteChunkTargetChars'],
+    40,
+    400,
+  );
+  const remoteChunkHardLimitChars = normalizeOptionalNumberInRange(
+    value['remoteChunkHardLimitChars'],
+    60,
+    600,
+  );
+  const normalizedRemoteChunkTargetChars =
+    remoteChunkTargetChars !== undefined && remoteChunkHardLimitChars !== undefined
+      ? Math.min(remoteChunkTargetChars, remoteChunkHardLimitChars)
+      : remoteChunkTargetChars;
+  const remoteQueueTargetSize = normalizeOptionalNumberInRange(
+    value['remoteQueueTargetSize'],
+    1,
+    8,
+  );
 
   if (!id || !name || !baseUrl) return null;
   if (!VALID_PROVIDER_TYPES.includes(type as TTSProviderType)) return null;
@@ -112,6 +155,10 @@ export const normalizeTTSProviderProfile = (value: unknown): TTSProviderProfile 
     headers: normalizeHeaderRecord(value['headers']),
     responseFormat,
     stream,
+    remoteChunkMaxSentences,
+    remoteChunkTargetChars: normalizedRemoteChunkTargetChars,
+    remoteChunkHardLimitChars,
+    remoteQueueTargetSize,
     cachedVoices: normalizeCachedVoices(value['cachedVoices']),
   };
 };

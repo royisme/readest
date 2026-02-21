@@ -56,6 +56,10 @@ export interface TTSProviderProfile {
   timeoutMs?: number;
   responseFormat?: TTSAudioFormat;
   stream?: boolean;
+  remoteChunkMaxSentences?: number;
+  remoteChunkTargetChars?: number;
+  remoteChunkHardLimitChars?: number;
+  remoteQueueTargetSize?: number;
   cachedVoices?: TTSProviderVoice[];
 }
 

@@ -20,6 +20,7 @@ import { invokeUseBackgroundAudio } from '@/utils/bridge';
 import { estimateTTSTime } from '@/utils/ttsTime';
 import { useTTSMediaSession } from './useTTSMediaSession';
 import { TTSEngineType } from '@/types/settings';
+import { TTSUtils } from '@/services/tts/TTSUtils';
 
 interface UseTTSControlProps {
   bookKey: string;
@@ -377,7 +378,12 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
 
     const ttsSpeakRange = range as Range | null;
     let ttsFromRange = ttsSpeakRange;
-    if (!ttsFromRange && viewSettings.ttsLocation) {
+    const isRemoteTTSStart =
+      settings.ttsSettings?.defaultEngine === 'remote-tts' ||
+      (viewSettings.ttsVoice || '').startsWith('remote-tts:');
+    const shouldResumeFromSavedTTSLocation = !isRemoteTTSStart;
+
+    if (!ttsFromRange && shouldResumeFromSavedTTSLocation && viewSettings.ttsLocation) {
       const ttsCfi = viewSettings.ttsLocation;
       if (isCfiInLocation(ttsCfi, location)) {
         const { index, anchor } = view.resolveCFI(ttsCfi);
@@ -445,6 +451,20 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
 
         ttsController.setLang(lang);
         ttsController.setRate(viewSettings.ttsRate);
+        const preferredVoiceId =
+          viewSettings.ttsVoice ||
+          TTSUtils.getPreferredVoice(ttsController.getEngine(), lang) ||
+          '';
+        if (preferredVoiceId) {
+          const voiceGroups = await ttsController.getVoices(lang);
+          const availableVoiceIds = voiceGroups
+            .flatMap((group) => group.voices)
+            .filter((voice) => !voice.disabled)
+            .map((voice) => voice.id);
+          if (availableVoiceIds.includes(preferredVoiceId)) {
+            await ttsController.setVoice(preferredVoiceId, lang);
+          }
+        }
         ttsController.speak(ssml, oneTime, () => handleStop(bookKey));
         ttsController.setTargetLang(getTTSTargetLang() || '');
       }

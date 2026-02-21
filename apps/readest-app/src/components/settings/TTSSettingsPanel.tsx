@@ -5,6 +5,10 @@ import { useEnv } from '@/context/EnvContext';
 import { SettingsPanelPanelProp } from './SettingsDialog';
 import { z } from 'zod';
 import {
+  DEFAULT_REMOTE_CHUNK_HARD_LIMIT_CHARS,
+  DEFAULT_REMOTE_CHUNK_MAX_SENTENCES,
+  DEFAULT_REMOTE_CHUNK_TARGET_CHARS,
+  DEFAULT_REMOTE_QUEUE_TARGET_SIZE,
   DEFAULT_TTS_SETTINGS,
   normalizeTTSProviderProfile,
   normalizeTTSSettings,
@@ -26,24 +30,45 @@ type ProviderForm = {
   timeoutMs: number;
   responseFormat: TTSAudioFormat;
   stream: boolean;
+  remoteChunkMaxSentences: number;
+  remoteChunkTargetChars: number;
+  remoteChunkHardLimitChars: number;
+  remoteQueueTargetSize: number;
 };
 
-const providerFormSchema = z.object({
-  id: z
-    .string()
-    .trim()
-    .min(1, 'Provider ID is required')
-    .regex(/^[a-zA-Z0-9._-]+$/, 'Provider ID can only contain letters, numbers, ".", "_" and "-"'),
-  name: z.string().trim().min(1, 'Provider name is required'),
-  baseUrl: z.string().trim().url('Base URL must be a valid URL'),
-  apiKey: z.string().trim(),
-  model: z.string().trim(),
-  defaultVoice: z.string().trim(),
-  enabled: z.boolean(),
-  timeoutMs: z.number().int().min(1000, 'Timeout must be at least 1000ms'),
-  responseFormat: z.enum(['mp3', 'wav']),
-  stream: z.boolean(),
-});
+const providerFormSchema = z
+  .object({
+    id: z
+      .string()
+      .trim()
+      .min(1, 'Provider ID is required')
+      .regex(
+        /^[a-zA-Z0-9._-]+$/,
+        'Provider ID can only contain letters, numbers, ".", "_" and "-"',
+      ),
+    name: z.string().trim().min(1, 'Provider name is required'),
+    baseUrl: z.string().trim().url('Base URL must be a valid URL'),
+    apiKey: z.string().trim(),
+    model: z.string().trim(),
+    defaultVoice: z.string().trim(),
+    enabled: z.boolean(),
+    timeoutMs: z.number().int().min(1000, 'Timeout must be at least 1000ms'),
+    responseFormat: z.enum(['mp3', 'wav']),
+    stream: z.boolean(),
+    remoteChunkMaxSentences: z.number().int().min(1).max(8),
+    remoteChunkTargetChars: z.number().int().min(40).max(400),
+    remoteChunkHardLimitChars: z.number().int().min(60).max(600),
+    remoteQueueTargetSize: z.number().int().min(1).max(8),
+  })
+  .superRefine((value, ctx) => {
+    if (value.remoteChunkHardLimitChars < value.remoteChunkTargetChars) {
+      ctx.addIssue({
+        path: ['remoteChunkHardLimitChars'],
+        code: z.ZodIssueCode.custom,
+        message: 'Hard limit must be greater than or equal to target chars',
+      });
+    }
+  });
 
 type ProviderFormErrorState = Partial<Record<keyof ProviderForm, string>> & {
   _form?: string;
@@ -60,6 +85,10 @@ const createProviderForm = (): ProviderForm => ({
   timeoutMs: 30000,
   responseFormat: 'mp3',
   stream: false,
+  remoteChunkMaxSentences: DEFAULT_REMOTE_CHUNK_MAX_SENTENCES,
+  remoteChunkTargetChars: DEFAULT_REMOTE_CHUNK_TARGET_CHARS,
+  remoteChunkHardLimitChars: DEFAULT_REMOTE_CHUNK_HARD_LIMIT_CHARS,
+  remoteQueueTargetSize: DEFAULT_REMOTE_QUEUE_TARGET_SIZE,
 });
 
 const toProviderProfile = (form: ProviderForm): TTSProviderProfile | null => {
@@ -75,6 +104,10 @@ const toProviderProfile = (form: ProviderForm): TTSProviderProfile | null => {
     timeoutMs: form.timeoutMs,
     responseFormat: form.responseFormat,
     stream: form.stream,
+    remoteChunkMaxSentences: form.remoteChunkMaxSentences,
+    remoteChunkTargetChars: form.remoteChunkTargetChars,
+    remoteChunkHardLimitChars: form.remoteChunkHardLimitChars,
+    remoteQueueTargetSize: form.remoteQueueTargetSize,
   });
 };
 
@@ -96,6 +129,15 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
   const [providerFormErrors, setProviderFormErrors] = useState<ProviderFormErrorState>({});
   const [healthStatuses, setHealthStatuses] = useState<Record<string, HealthStatus>>({});
   const [healthMessages, setHealthMessages] = useState<Record<string, string>>({});
+
+  const parseNumberInput = (raw: string, fallback: number): number => {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const normalizeFormNumber = (value: unknown, fallback: number): number => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
 
   const persistTTSSettings = async (nextTTSSettings: TTSSettings) => {
     const nextSettings = { ...settings, ttsSettings: normalizeTTSSettings(nextTTSSettings) };
@@ -149,6 +191,10 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
         timeoutMs: fieldErrors.timeoutMs?.[0],
         responseFormat: fieldErrors.responseFormat?.[0],
         stream: fieldErrors.stream?.[0],
+        remoteChunkMaxSentences: fieldErrors.remoteChunkMaxSentences?.[0],
+        remoteChunkTargetChars: fieldErrors.remoteChunkTargetChars?.[0],
+        remoteChunkHardLimitChars: fieldErrors.remoteChunkHardLimitChars?.[0],
+        remoteQueueTargetSize: fieldErrors.remoteQueueTargetSize?.[0],
       });
       return;
     }
@@ -230,9 +276,25 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
       model: provider.model,
       defaultVoice: provider.defaultVoice,
       enabled: provider.enabled,
-      timeoutMs: provider.timeoutMs || 30000,
+      timeoutMs: normalizeFormNumber(provider.timeoutMs, 30000),
       responseFormat: provider.responseFormat || 'mp3',
       stream: !!provider.stream,
+      remoteChunkMaxSentences: normalizeFormNumber(
+        provider.remoteChunkMaxSentences,
+        DEFAULT_REMOTE_CHUNK_MAX_SENTENCES,
+      ),
+      remoteChunkTargetChars: normalizeFormNumber(
+        provider.remoteChunkTargetChars,
+        DEFAULT_REMOTE_CHUNK_TARGET_CHARS,
+      ),
+      remoteChunkHardLimitChars: normalizeFormNumber(
+        provider.remoteChunkHardLimitChars,
+        DEFAULT_REMOTE_CHUNK_HARD_LIMIT_CHARS,
+      ),
+      remoteQueueTargetSize: normalizeFormNumber(
+        provider.remoteQueueTargetSize,
+        DEFAULT_REMOTE_QUEUE_TARGET_SIZE,
+      ),
     });
   };
 
@@ -350,7 +412,9 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
                       <div className='text-base-content/50 text-[11px]'>
                         {`Format: ${(provider.responseFormat || 'mp3').toUpperCase()} · Stream: ${
                           provider.stream ? 'on' : 'off'
-                        }`}
+                        } · Chunk: ${provider.remoteChunkMaxSentences || DEFAULT_REMOTE_CHUNK_MAX_SENTENCES} sent / ${
+                          provider.remoteChunkTargetChars || DEFAULT_REMOTE_CHUNK_TARGET_CHARS
+                        } chars`}
                       </div>
                     </div>
                     <div className='flex shrink-0 flex-wrap items-center justify-end gap-2'>
@@ -495,7 +559,7 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
               onChange={(e) => {
                 setProviderForm((prev) => ({
                   ...prev,
-                  timeoutMs: Number(e.target.value) || 30000,
+                  timeoutMs: parseNumberInput(e.target.value, 30000),
                 }));
                 setProviderFormErrors((prev) => ({
                   ...prev,
@@ -538,10 +602,130 @@ const TTSSettingsPanel: React.FC<SettingsPanelPanelProp> = ({ onRegisterReset })
                 type='checkbox'
                 className='toggle toggle-sm'
                 checked={providerForm.stream}
-                onChange={(e) => setProviderForm((prev) => ({ ...prev, stream: e.target.checked }))}
+                onChange={(e) => {
+                  setProviderForm((prev) => ({ ...prev, stream: e.target.checked }));
+                  setProviderFormErrors((prev) => ({ ...prev, _form: undefined }));
+                }}
               />
               <span>{_('Stream mode')}</span>
             </label>
+            <div className='sm:col-span-2'>
+              <div className='text-base-content/70 mb-1 text-xs'>{_('Remote chunk tuning')}</div>
+              <div className='grid grid-cols-1 gap-2 md:grid-cols-2'>
+                <input
+                  className='input input-bordered input-sm w-full min-w-0'
+                  type='number'
+                  min={1}
+                  max={8}
+                  step={1}
+                  placeholder={_('Chunk max sentences')}
+                  value={providerForm.remoteChunkMaxSentences}
+                  onChange={(e) => {
+                    setProviderForm((prev) => ({
+                      ...prev,
+                      remoteChunkMaxSentences: parseNumberInput(
+                        e.target.value,
+                        DEFAULT_REMOTE_CHUNK_MAX_SENTENCES,
+                      ),
+                    }));
+                    setProviderFormErrors((prev) => ({
+                      ...prev,
+                      remoteChunkMaxSentences: undefined,
+                      _form: undefined,
+                    }));
+                  }}
+                />
+                <input
+                  className='input input-bordered input-sm w-full min-w-0'
+                  type='number'
+                  min={40}
+                  max={400}
+                  step={10}
+                  placeholder={_('Chunk target chars')}
+                  value={providerForm.remoteChunkTargetChars}
+                  onChange={(e) => {
+                    setProviderForm((prev) => ({
+                      ...prev,
+                      remoteChunkTargetChars: parseNumberInput(
+                        e.target.value,
+                        DEFAULT_REMOTE_CHUNK_TARGET_CHARS,
+                      ),
+                    }));
+                    setProviderFormErrors((prev) => ({
+                      ...prev,
+                      remoteChunkTargetChars: undefined,
+                      _form: undefined,
+                    }));
+                  }}
+                />
+                <input
+                  className='input input-bordered input-sm w-full min-w-0'
+                  type='number'
+                  min={60}
+                  max={600}
+                  step={10}
+                  placeholder={_('Chunk hard limit chars')}
+                  value={providerForm.remoteChunkHardLimitChars}
+                  onChange={(e) => {
+                    setProviderForm((prev) => ({
+                      ...prev,
+                      remoteChunkHardLimitChars: parseNumberInput(
+                        e.target.value,
+                        DEFAULT_REMOTE_CHUNK_HARD_LIMIT_CHARS,
+                      ),
+                    }));
+                    setProviderFormErrors((prev) => ({
+                      ...prev,
+                      remoteChunkHardLimitChars: undefined,
+                      _form: undefined,
+                    }));
+                  }}
+                />
+                <input
+                  className='input input-bordered input-sm w-full min-w-0'
+                  type='number'
+                  min={1}
+                  max={8}
+                  step={1}
+                  placeholder={_('Queue size')}
+                  value={providerForm.remoteQueueTargetSize}
+                  onChange={(e) => {
+                    setProviderForm((prev) => ({
+                      ...prev,
+                      remoteQueueTargetSize: parseNumberInput(
+                        e.target.value,
+                        DEFAULT_REMOTE_QUEUE_TARGET_SIZE,
+                      ),
+                    }));
+                    setProviderFormErrors((prev) => ({
+                      ...prev,
+                      remoteQueueTargetSize: undefined,
+                      _form: undefined,
+                    }));
+                  }}
+                />
+              </div>
+            </div>
+            {providerFormErrors.remoteChunkMaxSentences && (
+              <div className='text-xs text-red-500 sm:col-span-2'>
+                {providerFormErrors.remoteChunkMaxSentences}
+              </div>
+            )}
+            {providerFormErrors.remoteChunkTargetChars && (
+              <div className='text-xs text-red-500 sm:col-span-2'>
+                {providerFormErrors.remoteChunkTargetChars}
+              </div>
+            )}
+            {providerFormErrors.remoteChunkHardLimitChars && (
+              <div className='text-xs text-red-500 sm:col-span-2'>
+                {providerFormErrors.remoteChunkHardLimitChars}
+              </div>
+            )}
+            {providerFormErrors.remoteQueueTargetSize && (
+              <div className='text-xs text-red-500 sm:col-span-2'>
+                {providerFormErrors.remoteQueueTargetSize}
+              </div>
+            )}
           </div>
           <div className='mt-3 flex gap-2'>
             <button className='btn btn-primary btn-sm' onClick={handleSaveProvider}>

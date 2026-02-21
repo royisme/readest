@@ -11,6 +11,12 @@ import { TTSUtils } from './TTSUtils';
 import { TTSClient } from './TTSClient';
 import { RemoteTTSClient } from './RemoteTTSClient';
 import { TTSSettings } from '@/types/settings';
+import {
+  DEFAULT_REMOTE_CHUNK_HARD_LIMIT_CHARS,
+  DEFAULT_REMOTE_CHUNK_MAX_SENTENCES,
+  DEFAULT_REMOTE_CHUNK_TARGET_CHARS,
+  DEFAULT_REMOTE_QUEUE_TARGET_SIZE,
+} from './providerSettings';
 
 type TTSState =
   | 'stopped'
@@ -50,6 +56,11 @@ export class TTSController extends EventTarget {
   ttsRemoteVoices: TTSVoice[] = [];
   ttsTargetLang: string = '';
   ttsSettings: TTSSettings | null = null;
+  #remoteBatchPreferredChars = DEFAULT_REMOTE_CHUNK_TARGET_CHARS;
+  #remoteBatchAbsoluteChars = DEFAULT_REMOTE_CHUNK_HARD_LIMIT_CHARS;
+  #remoteBatchMaxSentences = DEFAULT_REMOTE_CHUNK_MAX_SENTENCES;
+  #remoteBatchQueueTargetSize = DEFAULT_REMOTE_QUEUE_TARGET_SIZE;
+  #remoteBatchQueue: string[] = [];
 
   options: TTSHighlightOptions = { style: 'highlight', color: 'gray' };
 
@@ -179,6 +190,7 @@ export class TTSController extends EventTarget {
     }
 
     this.#ttsSectionIndex = sectionIndex;
+    this.#remoteBatchQueue = [];
 
     const currentSection = this.view.renderer.getContents()[0];
     if (currentSection?.index !== sectionIndex) {
@@ -263,6 +275,7 @@ export class TTSController extends EventTarget {
   }
 
   async preloadNextSSML(count: number = 4) {
+    if (this.ttsClient.name === 'remote-tts') return;
     const tts = this.view.tts;
     if (!tts) return;
 
@@ -302,7 +315,106 @@ export class TTSController extends EventTarget {
     return ssml;
   }
 
-  async #speak(ssml: string | undefined | Promise<string>, oneTime = false) {
+  #extractSpeakBody(ssml: string): { openTag: string; body: string } | null {
+    const openTagMatch = ssml.match(/<speak\b[^>]*>/i);
+    const closeTagMatch = ssml.match(/<\/speak>/i);
+    if (!openTagMatch || !closeTagMatch) return null;
+    const openTag = openTagMatch[0];
+    const body = ssml
+      .replace(/^[\s\S]*?<speak\b[^>]*>/i, '')
+      .replace(/<\/speak>[\s\S]*$/i, '')
+      .trim();
+    return { openTag, body };
+  }
+
+  #mergeSSMLBatch(ssmlBatch: string[]): string {
+    if (ssmlBatch.length <= 1) return ssmlBatch[0]!;
+    const parsedBatch = ssmlBatch
+      .map((item) => this.#extractSpeakBody(item))
+      .filter((item): item is { openTag: string; body: string } => !!item && item.body.length > 0);
+    if (parsedBatch.length === 0) return ssmlBatch[0]!;
+    if (parsedBatch.length === 1)
+      return `${parsedBatch[0]!.openTag}${parsedBatch[0]!.body}</speak>`;
+    const openTag = parsedBatch[0]!.openTag;
+    const mergedBody = parsedBatch.map((item) => item.body).join('');
+    return `${openTag}${mergedBody}</speak>`;
+  }
+
+  async #buildRemoteBatchSSML(initialSSML: string): Promise<string> {
+    if (this.ttsClient.name !== 'remote-tts') return initialSSML;
+    const tts = this.view.tts;
+    if (!tts) return initialSSML;
+
+    const ssmlBatch = [initialSSML];
+    let totalChars = parseSSMLMarks(initialSSML).plainText.length;
+
+    while (
+      ssmlBatch.length < this.#remoteBatchMaxSentences &&
+      totalChars < this.#remoteBatchPreferredChars
+    ) {
+      const nextRaw = tts.next();
+      if (!nextRaw) break;
+      const nextSSML = await this.#preprocessSSML(nextRaw);
+      if (!nextSSML) {
+        continue;
+      }
+      const nextChars = parseSSMLMarks(nextSSML).plainText.length;
+      if (
+        ssmlBatch.length > 0 &&
+        totalChars > 0 &&
+        totalChars + nextChars > this.#remoteBatchAbsoluteChars
+      ) {
+        tts.prev();
+        break;
+      }
+      ssmlBatch.push(nextSSML);
+      totalChars += nextChars;
+    }
+
+    return this.#mergeSSMLBatch(ssmlBatch);
+  }
+
+  #applyRemoteTuningFromSettings() {
+    const activeProviderId = this.ttsSettings?.activeProviderId;
+    const activeProvider = activeProviderId
+      ? this.ttsSettings?.providers.find((provider) => provider.id === activeProviderId)
+      : null;
+    const maxSentences =
+      activeProvider?.remoteChunkMaxSentences || DEFAULT_REMOTE_CHUNK_MAX_SENTENCES;
+    const targetChars = activeProvider?.remoteChunkTargetChars || DEFAULT_REMOTE_CHUNK_TARGET_CHARS;
+    const hardLimitChars =
+      activeProvider?.remoteChunkHardLimitChars || DEFAULT_REMOTE_CHUNK_HARD_LIMIT_CHARS;
+    const queueSize = activeProvider?.remoteQueueTargetSize || DEFAULT_REMOTE_QUEUE_TARGET_SIZE;
+
+    this.#remoteBatchMaxSentences = Math.max(1, Math.min(8, Math.round(maxSentences)));
+    this.#remoteBatchAbsoluteChars = Math.max(60, Math.min(600, Math.round(hardLimitChars)));
+    this.#remoteBatchPreferredChars = Math.max(
+      40,
+      Math.min(this.#remoteBatchAbsoluteChars, Math.round(targetChars)),
+    );
+    this.#remoteBatchQueueTargetSize = Math.max(1, Math.min(8, Math.round(queueSize)));
+  }
+
+  async #fillRemoteBatchQueue() {
+    if (this.ttsClient.name !== 'remote-tts') return;
+    const tts = this.view.tts;
+    if (!tts) return;
+
+    while (this.#remoteBatchQueue.length < this.#remoteBatchQueueTargetSize) {
+      const nextRaw = tts.next();
+      if (!nextRaw) break;
+      const nextSSML = await this.#preprocessSSML(nextRaw);
+      if (!nextSSML) continue;
+      const batch = await this.#buildRemoteBatchSSML(nextSSML);
+      this.#remoteBatchQueue.push(batch);
+    }
+  }
+
+  async #speak(
+    ssml: string | undefined | Promise<string>,
+    oneTime = false,
+    fromRemoteQueue = false,
+  ) {
     await this.stop();
     this.#currentSpeakAbortController = new AbortController();
     const { signal } = this.#currentSpeakAbortController;
@@ -334,6 +446,14 @@ export class TTSController extends EventTarget {
           this.#nossmlCnt = 0;
         }
 
+        if (!oneTime && this.ttsClient.name === 'remote-tts') {
+          this.#applyRemoteTuningFromSettings();
+          if (!fromRemoteQueue) {
+            ssml = await this.#buildRemoteBatchSSML(ssml);
+          }
+          await this.#fillRemoteBatchQueue();
+        }
+
         const { plainText, marks } = parseSSMLMarks(ssml);
         if (!oneTime) {
           if (!plainText || marks.length === 0) {
@@ -342,16 +462,21 @@ export class TTSController extends EventTarget {
           } else {
             this.dispatchSpeakMark(marks[0]);
           }
-          await this.preloadSSML(ssml, signal);
+          if (this.ttsClient.name !== 'remote-tts') {
+            await this.preloadSSML(ssml, signal);
+          }
         }
         const iter = await this.ttsClient.speak(ssml, signal);
         let lastCode;
-        for await (const { code } of iter) {
+        for await (const { code, message } of iter) {
           if (signal.aborted) {
             resolve();
             return;
           }
           lastCode = code;
+          if (code === 'error') {
+            throw new Error(message || 'TTS playback failed');
+          }
         }
 
         if (lastCode === 'end' && this.state === 'playing' && !oneTime) {
@@ -386,7 +511,9 @@ export class TTSController extends EventTarget {
       })
       .catch((e) => this.error(e));
     if (!oneTime) {
-      this.preloadNextSSML();
+      if (this.ttsClient.name !== 'remote-tts') {
+        this.preloadNextSSML();
+      }
       this.dispatchSpeakMark();
     }
   }
@@ -401,12 +528,17 @@ export class TTSController extends EventTarget {
 
   async start() {
     await this.initViewTTS();
+    if (!this.state.includes('paused') && this.ttsClient.name === 'remote-tts') {
+      this.#remoteBatchQueue = [];
+    }
     const ssml = this.state.includes('paused') ? this.view.tts?.resume() : this.view.tts?.start();
     if (this.state.includes('paused')) {
       this.resume();
     }
     this.#speak(ssml);
-    this.preloadNextSSML();
+    if (this.ttsClient.name !== 'remote-tts') {
+      this.preloadNextSSML();
+    }
   }
 
   async pause() {
@@ -445,6 +577,7 @@ export class TTSController extends EventTarget {
     await this.initViewTTS();
     const isPlaying = this.state === 'playing';
     await this.stop();
+    this.#remoteBatchQueue = [];
     if (!isPlaying) this.state = 'backward-paused';
 
     const ssml = byMark ? this.view.tts?.prevMark(!isPlaying) : this.view.tts?.prev(!isPlaying);
@@ -462,13 +595,32 @@ export class TTSController extends EventTarget {
     await this.stop();
     if (!isPlaying) this.state = 'forward-paused';
 
-    const ssml = byMark ? this.view.tts?.nextMark(!isPlaying) : this.view.tts?.next(!isPlaying);
+    let ssml: string | undefined;
+    if (!byMark && this.ttsClient.name === 'remote-tts') {
+      ssml = this.#remoteBatchQueue.shift();
+      if (!ssml) {
+        const nextSeed = await this.#preprocessSSML(this.view.tts?.next(!isPlaying));
+        if (nextSeed) {
+          ssml = await this.#buildRemoteBatchSSML(nextSeed);
+        }
+      }
+      await this.#fillRemoteBatchQueue();
+    } else {
+      ssml = byMark ? this.view.tts?.nextMark(!isPlaying) : this.view.tts?.next(!isPlaying);
+      if (byMark && this.ttsClient.name === 'remote-tts') {
+        this.#remoteBatchQueue = [];
+      }
+    }
     if (!ssml) {
       await this.#handleNavigationWithoutSSML(() => this.#initTTSForNextSection(), isPlaying);
     } else {
-      await this.#handleNavigationWithSSML(ssml, isPlaying);
+      if (isPlaying && !byMark && this.ttsClient.name === 'remote-tts') {
+        this.#speak(ssml, false, true);
+      } else {
+        await this.#handleNavigationWithSSML(ssml, isPlaying);
+      }
     }
-    if (isPlaying && !byMark) this.preloadNextSSML();
+    if (isPlaying && !byMark && this.ttsClient.name !== 'remote-tts') this.preloadNextSSML();
   }
 
   async setLang(lang: string) {
@@ -506,6 +658,7 @@ export class TTSController extends EventTarget {
 
   async setVoice(voiceId: string, lang: string) {
     this.state = 'setvoice-paused';
+    this.#remoteBatchQueue = [];
     const useEdgeTTS = !!this.ttsEdgeVoices.find(
       (voice) => (voiceId === '' || voice.id === voiceId) && !voice.disabled,
     );
