@@ -358,7 +358,6 @@ const ParagraphOverlay: React.FC<ParagraphOverlayProps> = ({
   const exitingParagraph = paragraphs.find((p) => p.state === 'exiting');
 
   return (
-    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <div
       ref={containerRef}
       role='dialog'
@@ -380,7 +379,7 @@ const ParagraphOverlay: React.FC<ParagraphOverlayProps> = ({
       onTouchStart={handleTouchStart}
       onKeyDown={(e) => e.stopPropagation()}
     >
-      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+      {}
       <div
         ref={contentRef}
         className='relative flex w-full max-w-3xl cursor-default flex-col items-center px-8'

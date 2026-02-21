@@ -215,7 +215,7 @@ const Dialog: React.FC<DialogProps> = ({
           ...(isMobile ? { height: snapHeight ? `${snapHeight * 100}%` : '100%', bottom: 0 } : {}),
         }}
       >
-        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+        {}
         <div
           className={clsx(
             'drag-handle h-10 max-h-10 min-h-10 w-full cursor-row-resize items-center justify-center',

@@ -93,7 +93,6 @@ export function SearchView({ search, baseURL, onNavigate, resolveURL }: SearchVi
               required={param.required}
               placeholder={`${_('Enter {{terms}}', { terms: getParamLabel(param.name).toLowerCase() })}`}
               className='input input-bordered w-full'
-              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus={
                 param.name === 'searchTerms' ||
                 param.name === 'query' ||

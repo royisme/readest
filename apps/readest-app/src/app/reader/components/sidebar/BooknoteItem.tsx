@@ -132,7 +132,6 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({ bookKey, item, onClick }) =
 
   return (
     <li
-      // eslint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role
       role='button'
       ref={viewRef}
       className={clsx(
@@ -207,7 +206,7 @@ const BooknoteItem: React.FC<BooknoteItemProps> = ({ bookKey, item, onClick }) =
           </div>
         </div>
       </div>
-      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+      {}
       <div
         className={clsx(
           'max-h-0 overflow-hidden p-0',

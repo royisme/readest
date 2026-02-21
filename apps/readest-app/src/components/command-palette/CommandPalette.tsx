@@ -124,12 +124,11 @@ const CommandPalette: React.FC = () => {
   const orderedCategories: CommandCategory[] = ['settings', 'actions', 'navigation'];
 
   return (
-    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
     <div
       className='fixed inset-0 z-[100] flex items-start justify-center bg-black/50 pt-[15vh]'
       onClick={handleBackdropClick}
     >
-      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+      {}
       <div
         className='bg-base-100 mx-4 w-full max-w-lg overflow-hidden rounded-xl shadow-2xl'
         role='dialog'

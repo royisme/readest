@@ -170,7 +170,6 @@ const ChatHistoryView: React.FC<ChatHistoryViewProps> = ({ bookKey }) => {
                             'input input-xs input-bordered w-full',
                             'bg-base-100 text-base-content',
                           )}
-                          // eslint-disable-next-line jsx-a11y/no-autofocus
                           autoFocus
                         />
                         <button

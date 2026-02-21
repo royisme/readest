@@ -23,7 +23,6 @@ const SearchResultItem: React.FC<SearchResultItemProps> = ({
 
   return (
     <li
-      // eslint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role
       role='button'
       ref={viewRef}
       className={clsx(

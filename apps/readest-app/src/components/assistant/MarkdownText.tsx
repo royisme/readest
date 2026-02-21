@@ -62,14 +62,12 @@ const useCopyToClipboard = ({ copiedDuration = 3000 }: { copiedDuration?: number
 
 const defaultComponents = memoizeMarkdownComponents({
   h1: ({ className, ...props }) => (
-    // eslint-disable-next-line jsx-a11y/heading-has-content
     <h1
       className={cn('mb-4 scroll-m-20 text-2xl font-bold tracking-tight last:mb-0', className)}
       {...props}
     />
   ),
   h2: ({ className, ...props }) => (
-    // eslint-disable-next-line jsx-a11y/heading-has-content
     <h2
       className={cn(
         'mb-3 mt-6 scroll-m-20 text-xl font-semibold tracking-tight first:mt-0 last:mb-0',
@@ -79,7 +77,6 @@ const defaultComponents = memoizeMarkdownComponents({
     />
   ),
   h3: ({ className, ...props }) => (
-    // eslint-disable-next-line jsx-a11y/heading-has-content
     <h3
       className={cn(
         'mb-2 mt-4 scroll-m-20 text-lg font-semibold tracking-tight first:mt-0 last:mb-0',
@@ -92,7 +89,6 @@ const defaultComponents = memoizeMarkdownComponents({
     <p className={cn('mb-3 leading-7 first:mt-0 last:mb-0', className)} {...props} />
   ),
   a: ({ className, ...props }) => (
-    // eslint-disable-next-line jsx-a11y/anchor-has-content
     <a
       className={cn('text-primary font-medium underline underline-offset-4', className)}
       {...props}

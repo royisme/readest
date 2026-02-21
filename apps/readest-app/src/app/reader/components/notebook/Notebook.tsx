@@ -356,7 +356,7 @@ const Notebook: React.FC = ({}) => {
                     <div className='collapse-content font-size-xs select-text px-3 pb-0'>
                       <p className='hyphens-auto text-justify'>{item.text}</p>
                       <div className='flex justify-end' dir='ltr'>
-                        {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions*/}
+                        {}
                         <div
                           className='font-size-xs cursor-pointer align-bottom text-red-500 hover:text-red-600'
                           onClick={handleEditNote.bind(null, item, true)}

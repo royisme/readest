@@ -31,7 +31,7 @@ const RSVPStartDialog: React.FC<RSVPStartDialogProps> = ({ startChoice, onSelect
       onClick={onClose}
       onKeyDown={(e) => e.key === 'Escape' && onClose()}
     >
-      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
+      {}
       <div
         className='mx-4 w-full max-w-md rounded-2xl p-6 shadow-2xl'
         style={{ backgroundColor: bgColor, color: fgColor, opacity: 1 }}
