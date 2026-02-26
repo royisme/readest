@@ -69,7 +69,7 @@ export class TxtToEpubConverter {
     const fileContent = await txtFile.arrayBuffer();
     const detectedEncoding = this.detectEncoding(fileContent) || 'utf-8';
     const runtimeEncoding = this.resolveSupportedEncoding(detectedEncoding);
-    console.log(`Detected encoding: ${detectedEncoding}, runtime encoding: ${runtimeEncoding}`);
+    // console.log(`Detected encoding: ${detectedEncoding}, runtime encoding: ${runtimeEncoding}`);
     const decoder = new TextDecoder(runtimeEncoding);
     const txtContent = decoder.decode(fileContent).trim();
 
@@ -86,7 +86,7 @@ export class TxtToEpubConverter {
     } catch {}
     const author = matchedAuthor || providedAuthor || '';
     const language = providedLanguage || detectLanguage(fileHeader);
-    console.log(`Detected language: ${language}`);
+    // console.log(`Detected language: ${language}`);
     const identifier = await partialMD5(txtFile);
     const metadata = { bookTitle, author, language, identifier };
 
@@ -124,7 +124,7 @@ export class TxtToEpubConverter {
     const { file: txtFile, author: providedAuthor, language: providedLanguage } = options;
     const detectedEncoding = (await this.detectEncodingFromFile(txtFile)) || 'utf-8';
     const runtimeEncoding = this.resolveSupportedEncoding(detectedEncoding);
-    console.log(`Detected encoding: ${detectedEncoding}, runtime encoding: ${runtimeEncoding}`);
+    // console.log(`Detected encoding: ${detectedEncoding}, runtime encoding: ${runtimeEncoding}`);
 
     const bookTitle = this.extractBookTitle(getBaseFilename(txtFile.name));
     const fileName = `${bookTitle}.epub`;
@@ -140,7 +140,7 @@ export class TxtToEpubConverter {
       providedAuthor,
       providedLanguage,
     );
-    console.log(`Detected language: ${language}`);
+    // console.log(`Detected language: ${language}`);
     const identifier = await partialMD5(txtFile);
     const metadata = { bookTitle, author, language, identifier };
 
