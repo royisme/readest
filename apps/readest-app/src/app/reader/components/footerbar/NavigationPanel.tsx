@@ -3,11 +3,11 @@ import React, { useCallback, useEffect } from 'react';
 import { RiArrowLeftSLine, RiArrowRightSLine } from 'react-icons/ri';
 import { RiArrowGoBackLine, RiArrowGoForwardLine } from 'react-icons/ri';
 import { RiArrowLeftDoubleLine, RiArrowRightDoubleLine } from 'react-icons/ri';
-import { getNavigationIcon, getNavigationLabel, getNavigationHandler } from './utils';
+import { useEnv } from '@/context/EnvContext';
 import { useReaderStore } from '@/store/readerStore';
 import { useTranslation } from '@/hooks/useTranslation';
-import { ViewSettings } from '@/types/book';
 import { NavigationHandlers } from './types';
+import { getNavigationIcon } from './utils';
 import Button from '@/components/Button';
 import Slider from '@/components/Slider';
 
@@ -17,9 +17,9 @@ interface NavigationPanelProps {
   progressFraction: number;
   progressValid: boolean;
   navigationHandlers: NavigationHandlers;
-  viewSettings?: ViewSettings;
   bottomOffset: string;
   sliderHeight: number;
+  forceMobileLayout: boolean;
 }
 
 export const NavigationPanel: React.FC<NavigationPanelProps> = ({
@@ -28,13 +28,15 @@ export const NavigationPanel: React.FC<NavigationPanelProps> = ({
   progressFraction,
   progressValid,
   navigationHandlers,
-  viewSettings,
-  bottomOffset: mobileBottomOffset,
+  bottomOffset,
   sliderHeight,
+  forceMobileLayout,
 }) => {
   const _ = useTranslation();
-  const { getView } = useReaderStore();
+  const { appService } = useEnv();
+  const { getView, getViewSettings } = useReaderStore();
   const view = getView(bookKey);
+  const viewSettings = getViewSettings(bookKey);
 
   const [progressValue, setProgressValue] = React.useState(
     progressValid ? progressFraction * 100 : 0,
@@ -56,14 +58,23 @@ export const NavigationPanel: React.FC<NavigationPanelProps> = ({
   );
 
   const classes = clsx(
-    'footerbar-progress-mobile bg-base-200 absolute flex w-full flex-col items-center gap-y-8 px-4 transition-all sm:hidden',
+    'footerbar-progress-mobile not-eink:bg-base-200 eink:bg-base-100 absolute flex w-full flex-col items-center gap-y-8 px-4 transition-all',
+    'eink:border-base-content eink:border-t',
+    !forceMobileLayout && 'sm:hidden',
     actionTab === 'progress'
       ? 'pointer-events-auto translate-y-0 pb-4 pt-8 ease-out'
       : 'pointer-events-none invisible translate-y-full overflow-hidden pb-0 pt-0 ease-in',
   );
 
   return (
-    <div className={classes} style={{ bottom: mobileBottomOffset }}>
+    <div
+      className={classes}
+      style={{
+        bottom: appService?.isAndroidApp
+          ? `calc(env(safe-area-inset-bottom) + 64px)`
+          : bottomOffset,
+      }}
+    >
       <div className='flex w-full items-center justify-between gap-x-6'>
         <Slider
           label={_('Reading Progress')}
@@ -80,21 +91,13 @@ export const NavigationPanel: React.FC<NavigationPanelProps> = ({
             <RiArrowLeftDoubleLine />,
             <RiArrowRightDoubleLine />,
           )}
-          onClick={getNavigationHandler(
-            viewSettings?.rtl,
-            navigationHandlers.onPrevSection,
-            navigationHandlers.onNextSection,
-          )}
-          label={getNavigationLabel(viewSettings?.rtl, _('Previous Section'), _('Next Section'))}
+          onClick={navigationHandlers.onPrevSection}
+          label={_('Previous Section')}
         />
         <Button
           icon={getNavigationIcon(viewSettings?.rtl, <RiArrowLeftSLine />, <RiArrowRightSLine />)}
-          onClick={getNavigationHandler(
-            viewSettings?.rtl,
-            navigationHandlers.onPrevPage,
-            navigationHandlers.onNextPage,
-          )}
-          label={getNavigationLabel(viewSettings?.rtl, _('Previous Page'), _('Next Page'))}
+          onClick={navigationHandlers.onPrevPage}
+          label={_('Previous Page')}
         />
         <Button
           icon={getNavigationIcon(
@@ -118,12 +121,8 @@ export const NavigationPanel: React.FC<NavigationPanelProps> = ({
         />
         <Button
           icon={getNavigationIcon(viewSettings?.rtl, <RiArrowRightSLine />, <RiArrowLeftSLine />)}
-          onClick={getNavigationHandler(
-            viewSettings?.rtl,
-            navigationHandlers.onNextPage,
-            navigationHandlers.onPrevPage,
-          )}
-          label={getNavigationLabel(viewSettings?.rtl, _('Next Page'), _('Previous Page'))}
+          onClick={navigationHandlers.onNextPage}
+          label={_('Next Page')}
         />
         <Button
           icon={getNavigationIcon(
@@ -131,12 +130,8 @@ export const NavigationPanel: React.FC<NavigationPanelProps> = ({
             <RiArrowRightDoubleLine />,
             <RiArrowLeftDoubleLine />,
           )}
-          onClick={getNavigationHandler(
-            viewSettings?.rtl,
-            navigationHandlers.onNextSection,
-            navigationHandlers.onPrevSection,
-          )}
-          label={getNavigationLabel(viewSettings?.rtl, _('Next Section'), _('Previous Section'))}
+          onClick={navigationHandlers.onNextSection}
+          label={_('Next Section')}
         />
       </div>
     </div>

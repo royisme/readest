@@ -3,7 +3,7 @@ import { useEnv } from '@/context/EnvContext';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useSettingsStore } from '@/store/settingsStore';
-import { throttle } from '@/utils/throttle';
+import { debounce } from '@/utils/debounce';
 
 export const useProgressAutoSave = (bookKey: string) => {
   const { envConfig } = useEnv();
@@ -13,13 +13,17 @@ export const useProgressAutoSave = (bookKey: string) => {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const saveBookConfig = useCallback(
-    throttle(() => {
+    debounce(() => {
       setTimeout(async () => {
-        const config = getConfig(bookKey)!;
+        // Skip while previewing a deep-link target — the user's actual
+        // last-read position should not be overwritten by a transient view.
+        if (useReaderStore.getState().getViewState(bookKey)?.previewMode) return;
+        const config = getConfig(bookKey);
+        if (!config) return;
         const settings = useSettingsStore.getState().settings;
         await saveConfig(envConfig, bookKey, config, settings);
-      }, 5000);
-    }, 10000),
+      }, 500);
+    }, 1000),
     [],
   );
 

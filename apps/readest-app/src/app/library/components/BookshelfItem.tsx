@@ -1,17 +1,17 @@
 import clsx from 'clsx';
 import { useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { navigateToLibrary, navigateToReader, showReaderWindow } from '@/utils/nav';
 import { useEnv } from '@/context/EnvContext';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useAppRouter } from '@/hooks/useAppRouter';
 import { useLongPress } from '@/hooks/useLongPress';
 import { Menu, MenuItem } from '@tauri-apps/api/menu';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { eventDispatcher } from '@/utils/event';
 import { getOSPlatform } from '@/utils/misc';
 import { throttle } from '@/utils/throttle';
+import { navigateToReader, showReaderWindow } from '@/utils/nav';
 import { LibraryCoverFitType, LibraryViewModeType } from '@/types/settings';
 import { BOOK_UNGROUPED_ID, BOOK_UNGROUPED_NAME } from '@/services/constants';
 import { FILE_REVEAL_LABELS, FILE_REVEAL_PLATFORMS } from '@/utils/os';
@@ -99,6 +99,7 @@ interface BookshelfItemProps {
   handleBookDelete: (book: Book, syncBooks?: boolean) => Promise<boolean>;
   handleSetSelectMode: (selectMode: boolean) => void;
   handleShowDetailsBook: (book: Book) => void;
+  handleLibraryNavigation: (targetGroup: string) => void;
   handleUpdateReadingStatus: (book: Book, status: ReadingStatus | undefined) => void;
 }
 
@@ -116,11 +117,11 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
   handleBookDownload,
   handleSetSelectMode,
   handleShowDetailsBook,
+  handleLibraryNavigation,
   handleUpdateReadingStatus,
 }) => {
   const _ = useTranslation();
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const router = useAppRouter();
   const { envConfig, appService } = useEnv();
   const { settings } = useSettingsStore();
   const { updateBook } = useLibraryStore();
@@ -148,8 +149,8 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
       } finally {
         if (loadingTimeout) clearTimeout(loadingTimeout);
         setLoading(false);
-        return available;
       }
+      return available;
     }
     return true;
   };
@@ -179,15 +180,11 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
       if (isSelectMode) {
         toggleSelection(group.id);
       } else {
-        const params = new URLSearchParams(searchParams?.toString());
-        params.set('group', group.id);
-        setTimeout(() => {
-          navigateToLibrary(router, `${params.toString()}`);
-        }, 0);
+        handleLibraryNavigation(group.id);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isSelectMode, searchParams],
+    [isSelectMode, handleLibraryNavigation],
   );
 
   const bookContextMenuHandler = async (book: Book) => {
@@ -255,6 +252,14 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
         handleBookUpload(book);
       },
     });
+    const shareBookMenuItem = await MenuItem.new({
+      text: _('Share Book'),
+      action: async () => {
+        // Bookshelf.tsx hosts the dialog; we dispatch and let it route
+        // unauthenticated users into the login flow first.
+        eventDispatcher.dispatch('show-share-dialog', { book });
+      },
+    });
     const deleteBookMenuItem = await MenuItem.new({
       text: _('Delete'),
       action: async () => {
@@ -280,6 +285,11 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
     }
     if (!book.uploadedAt && book.downloadedAt) {
       menu.append(uploadBookMenuItem);
+    }
+    // Share is offered for any local-or-uploaded book; the dialog will trigger
+    // an upload first if the book hasn't been pushed yet.
+    if (book.downloadedAt || book.uploadedAt) {
+      menu.append(shareBookMenuItem);
     }
     menu.append(deleteBookMenuItem);
     menu.popup();
@@ -391,12 +401,12 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
   };
 
   return (
-    <div className={clsx(mode === 'list' && 'sm:hover:bg-base-300/50 px-4 sm:px-6')}>
+    <div className={clsx(mode === 'grid' ? 'h-full' : 'sm:hover:bg-base-300/50 px-4 sm:px-6')}>
       <div
         className={clsx(
           'visible-focus-inset-2 group',
           mode === 'grid' &&
-            'sm:hover:bg-base-300/50 flex h-full flex-col px-0 py-2 sm:px-4 sm:py-4',
+            'sm:hover:bg-base-300/50 flex h-full flex-col px-0 py-2 sm:rounded-md sm:px-4 sm:py-4',
           mode === 'list' && 'border-base-300 flex flex-col border-b py-2',
           appService?.isMobileApp && 'no-context-menu',
           pressing && mode === 'grid' ? 'not-eink:scale-95' : 'scale-100',

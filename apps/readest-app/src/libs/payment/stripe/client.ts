@@ -39,7 +39,7 @@ export type StripeAvailablePlan = AvailablePlan & {
 export const fetchStripePlans = async () => {
   const response = await fetch(WEB_STRIPE_PLANS_URL);
   const data = await response.json();
-  return data && data instanceof Array ? data : [];
+  return data && Array.isArray(data) ? data : [];
 };
 
 export const createStripeCheckoutSession = async (
@@ -65,24 +65,15 @@ export const createStripeCheckoutSession = async (
   return response.json();
 };
 
-export const redirectToStripeCheckout = async (sessionId?: string, url?: string): Promise<void> => {
+export const redirectToStripeCheckout = async (url?: string): Promise<void> => {
   if (url) {
     if (isWebAppPlatform()) {
       window.location.href = url;
     } else if (isTauriAppPlatform()) {
       await openUrl(url);
     }
-  } else if (sessionId) {
-    const stripe = await getStripe();
-    if (!stripe) {
-      throw new Error('Stripe not loaded');
-    }
-    const result = await stripe.redirectToCheckout({ sessionId });
-    if (result.error) {
-      throw result.error;
-    }
   } else {
-    throw new Error('No sessionId or url returned from checkout API');
+    throw new Error('No checkout URL returned from the Stripe API');
   }
 };
 

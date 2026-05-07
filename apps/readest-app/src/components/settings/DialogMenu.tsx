@@ -4,13 +4,15 @@ import { MdCheck } from 'react-icons/md';
 import { useEnv } from '@/context/EnvContext';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useReaderStore } from '@/store/readerStore';
 import { useCustomFontStore } from '@/store/customFontStore';
-import { useResponsiveSize } from '@/hooks/useResponsiveSize';
+import { saveViewSettings } from '@/helpers/settings';
 import { SettingsPanelType } from './SettingsDialog';
 import Menu from '@/components/Menu';
 import MenuItem from '@/components/MenuItem';
 
 interface DialogMenuProps {
+  bookKey: string;
   activePanel: SettingsPanelType;
   setIsDropdownOpen?: (open: boolean) => void;
   onReset: () => void;
@@ -18,6 +20,7 @@ interface DialogMenuProps {
 }
 
 const DialogMenu: React.FC<DialogMenuProps> = ({
+  bookKey,
   activePanel,
   setIsDropdownOpen,
   onReset,
@@ -25,12 +28,14 @@ const DialogMenu: React.FC<DialogMenuProps> = ({
 }) => {
   const _ = useTranslation();
   const { envConfig, appService } = useEnv();
-  const iconSize = useResponsiveSize(16);
-  const { setFontPanelView, isSettingsGlobal, setSettingsGlobal } = useSettingsStore();
+  const { setFontPanelView } = useSettingsStore();
+  const { getViewSettings } = useReaderStore();
   const { getAllFonts, removeFont, saveCustomFonts } = useCustomFontStore();
+  const viewSettings = getViewSettings(bookKey);
+  const isSettingsGlobal = viewSettings?.isGlobal ?? true;
 
   const handleToggleGlobal = () => {
-    setSettingsGlobal(!isSettingsGlobal);
+    saveViewSettings(envConfig, bookKey, 'isGlobal', !isSettingsGlobal, true, false);
     setIsDropdownOpen?.(false);
   };
 
@@ -59,8 +64,9 @@ const DialogMenu: React.FC<DialogMenuProps> = ({
       <MenuItem
         label={_('Global Settings')}
         tooltip={isSettingsGlobal ? _('Apply to All Books') : _('Apply to This Book')}
+        disabled={!bookKey}
         buttonClass='lg:tooltip'
-        Icon={isSettingsGlobal ? <MdCheck size={iconSize} className='text-base-content' /> : null}
+        Icon={isSettingsGlobal ? MdCheck : null}
         onClick={handleToggleGlobal}
       />
       <MenuItem label={resetLabel || _('Reset Settings')} onClick={handleResetToDefaults} />

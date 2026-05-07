@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { renderNoteTemplate, validateNoteTemplate, NoteTemplateData } from '../../utils/note';
+import {
+  renderNoteTemplate,
+  validateNoteTemplate,
+  formatBlockQuote,
+  NoteTemplateData,
+} from '../../utils/note';
 
 describe('renderNoteTemplate', () => {
   const sampleData: NoteTemplateData = {
@@ -325,6 +330,23 @@ describe('renderNoteTemplate', () => {
     });
   });
 
+  describe('Blockquote filter', () => {
+    it('should prefix every line with > in templates', () => {
+      const data: NoteTemplateData = {
+        ...sampleData,
+        chapters: [
+          {
+            title: 'Ch1',
+            annotations: [{ text: 'Line 1\nLine 2\nLine 3' }],
+          },
+        ],
+      };
+      const template = '{{ chapters[0].annotations[0].text | blockquote }}';
+      const result = renderNoteTemplate(template, data);
+      expect(result).toBe('> Line 1\n> Line 2\n> Line 3');
+    });
+  });
+
   describe('Newline to BR filter', () => {
     it('should convert newlines to br tags', () => {
       const dataWithNewlines: NoteTemplateData = {
@@ -496,6 +518,45 @@ describe('renderNoteTemplate', () => {
     });
   });
 
+  describe('Annotation link variants', () => {
+    const linkData: NoteTemplateData = {
+      title: 'Book',
+      author: 'Author',
+      exportDate: '2024-01-15',
+      chapters: [
+        {
+          title: 'Ch1',
+          annotations: [
+            {
+              text: 'quote',
+              webLink: 'https://web.readest.com/o/book/abc/annotation/n1',
+              appLink: 'readest://book/abc/annotation/n1',
+              link: 'https://web.readest.com/o/book/abc/annotation/n1',
+            },
+          ],
+        },
+      ],
+    };
+
+    it('should render annotation.webLink', () => {
+      const template = '{{ chapters[0].annotations[0].webLink }}';
+      const result = renderNoteTemplate(template, linkData);
+      expect(result).toBe('https://web.readest.com/o/book/abc/annotation/n1');
+    });
+
+    it('should render annotation.appLink with readest:// scheme', () => {
+      const template = '{{ chapters[0].annotations[0].appLink }}';
+      const result = renderNoteTemplate(template, linkData);
+      expect(result).toBe('readest://book/abc/annotation/n1');
+    });
+
+    it('should still render legacy annotation.link', () => {
+      const template = '{{ chapters[0].annotations[0].link }}';
+      const result = renderNoteTemplate(template, linkData);
+      expect(result).toBe('https://web.readest.com/o/book/abc/annotation/n1');
+    });
+  });
+
   describe('Whitespace handling', () => {
     it('should trim blocks correctly', () => {
       const template = `Start
@@ -568,5 +629,26 @@ describe('validateNoteTemplate', () => {
     const template = 'Just plain text without any template syntax';
     const result = validateNoteTemplate(template);
     expect(result.isValid).toBe(true);
+  });
+});
+
+describe('formatBlockQuote', () => {
+  it('should prefix every line with > for multi-line text', () => {
+    const text = 'Nothing must happen to you\nNo, what am I saying\nEverything must happen to you';
+    expect(formatBlockQuote(text)).toBe(
+      '> Nothing must happen to you\n> No, what am I saying\n> Everything must happen to you',
+    );
+  });
+
+  it('should handle single-line text', () => {
+    expect(formatBlockQuote('Hello')).toBe('> Hello');
+  });
+
+  it('should handle empty string', () => {
+    expect(formatBlockQuote('')).toBe('> ');
+  });
+
+  it('should preserve empty lines within the quote', () => {
+    expect(formatBlockQuote('First\n\nThird')).toBe('> First\n> \n> Third');
   });
 });

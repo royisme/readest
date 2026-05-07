@@ -1,5 +1,75 @@
 {
   "releases": {
+    "0.10.6": {
+      "date": "2026-04-13",
+      "notes": [
+        "Library: Much faster browsing for large collections",
+        "Reading: Added an option to keep the book's original paragraph layout",
+        "Reading: Fixed page navigation for Arabic books",
+        "PDF: Fixed TTS reading interruptions at line breaks in PDFs",
+        "PDF: You can now apply your chosen theme colors to PDFs",
+        "Sync: Added HTTP Basic auth support for CWA",
+        "Sync: Improved progress sync with Hardcover.app",
+        "OPDS: You can now edit your registered catalogs, with better handling of download filenames",
+        "Speed Reading: Your reading position now syncs across devices",
+        "Platform: Fixed window buttons on macOS, reduced crashes on iOS"
+      ]
+    },
+    "0.10.4": {
+      "date": "2026-04-06",
+      "notes": [
+        "Annotations: You can now name your highlight colors, and your custom names sync across devices",
+        "Annotations: Fixed highlights that stayed on the page after being deleted from the sidebar",
+        "Speed Reading: Added an option to split long words, a faster countdown",
+        "Text-to-Speech: Fixed double playback when tapping the play button in quick succession",
+        "Accessibility: Dropdown menus now open reliably when activated with the keyboard",
+        "Reading: Background textures now display correctly when you override the theme background color",
+        "Translation: Temporarily disabled the Yandex provider while its service is unavailable"
+      ]
+    },
+    "0.10.2": {
+      "date": "2026-04-05",
+      "notes": [
+        "Reading: Added single section scroll option, keyboard shortcuts help dialog, and reading ruler improvements",
+        "Reading: Fixed Adobe font deobfuscation and applied theme colors to PDFs",
+        "Reading: Fixed paginator freeze, image sizing on resize, and vertical writing mode compatibility",
+        "Annotations: Fixed annotations grouped under wrong chapter and added highlight opacity setting",
+        "Text-to-Speech: Added dedicated TTS settings tab with highlight opacity and keyboard shortcuts for navigation",
+        "Sync: Added Hardcover.app sync integration and improved KOSync progress accuracy",
+        "KOReader Plugin: Added full annotation sync option and fixed sync-related crashes",
+        "OPDS: Added custom catalog headers with web proxy consent and fixed feed display issues",
+        "Speed Reading: Added per-chapter progress bar and speed selector dropdown",
+        "Android: Added D-pad navigation for Android TV remote controller",
+        "Theme: Added atmosphere Easter egg with video overlay and ambient audio"
+      ]
+    },
+    "0.10.1": {
+      "date": "2026-03-22",
+      "notes": [
+        "Reading: Added continuous scroll and spread layout support for EPUBs",
+        "Reading: Added current time and battery display in footer",
+        "Reading: Added TTS, annotation support, pinch-to-zoom, and scroll mode for PDFs",
+        "Library: Added backup/restore to a zip file and batch metadata refresh",
+        "KOReader: Added bookmark and annotation sync between KOReader and Readest devices",
+        "Footnotes: Added back navigation with link history and more responsive popup sizing",
+        "Annotations: Added loupe display when selecting text in instant annotation mode",
+        "Text-to-Speech: Fixed TTS reading position tracking in scrolled mode"
+      ]
+    },
+    "0.9.101": {
+      "date": "2026-02-28",
+      "notes": [
+        "Text-to-Speech: Fixed an issue where TTS could not continue to the next chapter",
+        "Reading: Fixed an issue importing very large TXT files on iOS",
+        "Reading: Fixed the layout of the reading ruler in scrolled mode",
+        "Reading: Smoother page-turn animations for a more fluid experience",
+        "Reading: Added a gallery mode to zoom and browse images within books",
+        "Annotations: Page numbers are now displayed and exported with highlights and notes",
+        "Annotations: Added support for exporting highlights to Readwise",
+        "OPDS: Fixed missing book descriptions in OPDS feeds",
+        "Android: Improved compatibility with older WebView versions on Android"
+      ]
+    },
     "0.9.100": {
       "date": "2026-02-13",
       "notes": [

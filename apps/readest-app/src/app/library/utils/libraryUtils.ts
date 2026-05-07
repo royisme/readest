@@ -270,17 +270,27 @@ const createAuthorGroups = (books: Book[]): (Book | BooksGroup)[] => {
 
 /**
  * Create a sorter for books within a group.
- * For series groups: sort by seriesIndex first, then by global sort for items without index.
+ * For series groups: sort by seriesIndex first (always ascending), then by global sort for items without index.
  * For author groups: follow global sort setting.
+ * @param sortAscending - When true (default), sort direction is ascending. Series index is always
+ *   ascending regardless of this flag; the flag only affects the fallback sort for books without
+ *   series index and non-series groupings.
  */
 export const createWithinGroupSorter =
-  (groupBy: LibraryGroupByType, sortBy: LibrarySortByType, uiLanguage: string) =>
+  (
+    groupBy: LibraryGroupByType,
+    sortBy: LibrarySortByType,
+    uiLanguage: string,
+    sortAscending: boolean = true,
+  ) =>
   (a: Book, b: Book): number => {
+    const sortDirection = sortAscending ? 1 : -1;
+
     if (groupBy === LibraryGroupByType.Series) {
       const aIndex = a.metadata?.seriesIndex;
       const bIndex = b.metadata?.seriesIndex;
 
-      // Both have series index - sort by index
+      // Both have series index - always sort ascending by index
       if (aIndex != null && bIndex != null) {
         return aIndex - bIndex;
       }
@@ -289,12 +299,12 @@ export const createWithinGroupSorter =
       if (aIndex != null) return -1;
       if (bIndex != null) return 1;
 
-      // Neither has series index - fall back to global sort
-      return createBookSorter(sortBy, uiLanguage)(a, b);
+      // Neither has series index - fall back to global sort with direction
+      return createBookSorter(sortBy, uiLanguage)(a, b) * sortDirection;
     }
 
-    // For author and other groupings, use global sort
-    return createBookSorter(sortBy, uiLanguage)(a, b);
+    // For author and other groupings, use global sort with direction
+    return createBookSorter(sortBy, uiLanguage)(a, b) * sortDirection;
   };
 
 /**
@@ -335,11 +345,13 @@ export const getBookSortValue = (book: Book, sortBy: LibrarySortByType): number 
 export const getGroupSortValue = (
   group: BooksGroup,
   sortBy: LibrarySortByType,
+  groupBy?: LibraryGroupByType,
 ): number | string => {
   const books = group.books;
 
   if (books.length === 0) {
     return sortBy === LibrarySortByType.Title ||
+      sortBy === LibrarySortByType.Series ||
       sortBy === LibrarySortByType.Author ||
       sortBy === LibrarySortByType.Format
       ? group.name
@@ -348,11 +360,23 @@ export const getGroupSortValue = (
 
   switch (sortBy) {
     case LibrarySortByType.Title:
-    case LibrarySortByType.Author:
+    case LibrarySortByType.Series:
     case LibrarySortByType.Format:
-      // For text-based sorts, use the group name
-      // This isn't perfect, especially with the
       return group.name;
+
+    case LibrarySortByType.Author: {
+      if (groupBy === LibraryGroupByType.Author) {
+        // Author group: format the group name (single author) with last-name-first
+        return formatAuthors(group.name, 'en', true);
+      }
+      if (groupBy === LibraryGroupByType.Series) {
+        // Series group: use the first book's author for sorting
+        const firstBook = books[0]!;
+        return formatAuthors(firstBook.author, firstBook.primaryLanguage || 'en', true);
+      }
+      // Custom/other groups: fall back to group name
+      return group.name;
+    }
 
     case LibrarySortByType.Updated:
       // Return the most recent updatedAt
@@ -403,10 +427,10 @@ export const compareSortValues = (
  * Create a sorter for groups themselves based on sort criteria.
  */
 export const createGroupSorter =
-  (sortBy: LibrarySortByType, uiLanguage: string) =>
+  (sortBy: LibrarySortByType, uiLanguage: string, groupBy?: LibraryGroupByType) =>
   (a: BooksGroup, b: BooksGroup): number => {
-    const aValue = getGroupSortValue(a, sortBy);
-    const bValue = getGroupSortValue(b, sortBy);
+    const aValue = getGroupSortValue(a, sortBy, groupBy);
+    const bValue = getGroupSortValue(b, sortBy, groupBy);
 
     // String comparison for text-based sorts
     if (typeof aValue === 'string' && typeof bValue === 'string') {

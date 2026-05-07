@@ -1,7 +1,7 @@
 'use client';
 
 import clsx from 'clsx';
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
@@ -11,7 +11,7 @@ import { useQuotaStats } from '@/hooks/useQuotaStats';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useUserActions } from '@/hooks/useUserActions';
 import { useAvailablePlans } from '@/hooks/useAvailablePlans';
-import { PlanType } from '@/types/quota';
+import type { PlanType } from '@/types/quota';
 import { navigateToLibrary } from '@/utils/nav';
 import { eventDispatcher } from '@/utils/event';
 import { isTauriAppPlatform } from '@/services/environment';
@@ -30,7 +30,7 @@ import {
   redirectToStripePortal,
   handleStripeCheckoutError,
   getSubscriptionSuccessUrl as getStripeSubscriptionSuccessUrl,
-  StripeAvailablePlan,
+  type StripeAvailablePlan,
 } from '@/libs/payment/stripe/client';
 import LegalLinks from '@/components/LegalLinks';
 import Spinner from '@/components/Spinner';
@@ -40,6 +40,7 @@ import UsageStats from './components/UsageStats';
 import PlansComparison from './components/PlansComparison';
 import AccountActions from './components/AccountActions';
 import StorageManager from './components/StorageManager';
+import SharedLinksSection from './components/SharedLinksSection';
 import Checkout from './components/Checkout';
 
 type CheckoutState = {
@@ -58,6 +59,7 @@ const ProfilePage = () => {
   const [loading, setLoading] = useState(false);
   const [showEmbeddedCheckout, setShowEmbeddedCheckout] = useState(false);
   const [showStorageManager, setShowStorageManager] = useState(false);
+  const [showSharedLinksManager, setShowSharedLinksManager] = useState(false);
   const [checkoutState, setCheckoutState] = useState<CheckoutState>({
     clientSecret: '',
     sessionId: '',
@@ -105,6 +107,8 @@ const ProfilePage = () => {
     } else if (showStorageManager) {
       setShowStorageManager(false);
       refresh();
+    } else if (showSharedLinksManager) {
+      setShowSharedLinksManager(false);
     } else {
       navigateToLibrary(router);
     }
@@ -120,9 +124,13 @@ const ProfilePage = () => {
         planType,
       );
 
-      const selectedPlan = availablePlans.find(
-        (plan) => plan.productId === productId,
-      )! as StripeAvailablePlan;
+      const foundPlan = availablePlans.find((plan) => plan.productId === productId);
+
+      if (!foundPlan) {
+        throw new Error(`Plan not found for product ID: ${productId}`);
+      }
+
+      const selectedPlan = foundPlan as StripeAvailablePlan;
       const planName = selectedPlan.product?.name || selectedPlan.productName;
 
       const isEmbeddedCheckout = isTauriAppPlatform();
@@ -134,7 +142,7 @@ const ProfilePage = () => {
           sessionId,
         });
       } else {
-        await redirectToStripeCheckout(sessionId, url);
+        await redirectToStripeCheckout(url);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -177,10 +185,14 @@ const ProfilePage = () => {
     try {
       const purchases = await restoreIAPPurchases();
       if (purchases.length > 0) {
-        purchases
+        const restoredSubscriptions = purchases
           .filter((p) => !isPurchaseProduct(p.productId))
           .sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime());
-        const purchase = purchases[0]!;
+        const purchase = restoredSubscriptions[0];
+
+        if (!purchase) {
+          throw new Error('No subscription found in restored purchases');
+        }
         router.push(getIAPSubscriptionSuccessUrl(purchase));
       } else {
         eventDispatcher.dispatch('toast', {
@@ -220,6 +232,10 @@ const ProfilePage = () => {
 
   const handleManageStorage = () => {
     setShowStorageManager(true);
+  };
+
+  const handleManageSharedLinks = () => {
+    setShowSharedLinksManager(true);
   };
 
   if (!mounted) {
@@ -284,12 +300,16 @@ const ProfilePage = () => {
                     planDetails={userPlanDetails}
                   />
 
-                  {!showStorageManager && <UsageStats quotas={quotas} />}
+                  {!showStorageManager && !showSharedLinksManager && <UsageStats quotas={quotas} />}
                 </div>
 
                 {showStorageManager ? (
                   <div className='flex flex-col gap-y-8 px-6'>
                     <StorageManager />
+                  </div>
+                ) : showSharedLinksManager ? (
+                  <div className='flex flex-col gap-y-8 px-6'>
+                    <SharedLinksSection />
                   </div>
                 ) : (
                   <>
@@ -315,6 +335,7 @@ const ProfilePage = () => {
                         onRestorePurchase={handleIAPRestorePurchase}
                         onManageSubscription={handleManageSubscription}
                         onManageStorage={handleManageStorage}
+                        onManageSharedLinks={handleManageSharedLinks}
                       />
                     </div>
                   </>

@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   RiFolderOpenLine,
   RiCheckboxCircleFill,
@@ -192,7 +192,7 @@ export const MigrateDataWindow = () => {
 
         const srcPath = await join(currentDataDir, file.path);
         const destPath = await join(newDataDir, file.path);
-        await appService.copyFile(srcPath, destPath, 'None');
+        await appService.copyFile(srcPath, 'None', destPath, 'None');
       }
 
       // Verify all files copied

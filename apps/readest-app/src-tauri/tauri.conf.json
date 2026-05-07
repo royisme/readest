@@ -157,7 +157,10 @@
       ]
     },
     "deep-link": {
-      "mobile": [{ "host": "web.readest.com" }],
+      "mobile": [
+        { "scheme": ["https"], "host": "web.readest.com", "appLink": true },
+        { "scheme": ["readest"], "appLink": false }
+      ],
       "desktop": {
         "schemes": ["inkline"]
       }

@@ -1,6 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { BookDoc, getDirection } from '@/libs/document';
-import { BookConfig } from '@/types/book';
+import clsx from 'clsx';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { convertBlobUrlToDataUrl, BookDoc, getDirection } from '@/libs/document';
+import { BOOK_IDS_SEPARATOR } from '@/services/constants';
+import { BookConfig, PageInfo } from '@/types/book';
 import { FoliateView, wrappedFoliateView } from '@/types/view';
 import { Insets } from '@/types/misc';
 import { useEnv } from '@/context/EnvContext';
@@ -10,8 +13,8 @@ import { useBookDataStore } from '@/store/bookDataStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useCustomFontStore } from '@/store/customFontStore';
 import { useParallelViewStore } from '@/store/parallelViewStore';
-import { useMouseEvent, useTouchEvent } from '../hooks/useIframeEvents';
-import { usePagination } from '../hooks/usePagination';
+import { useMouseEvent, useTouchEvent, useLongPressEvent } from '../hooks/useIframeEvents';
+import { usePagination, viewPagination } from '../hooks/usePagination';
 import { useFoliateEvents } from '../hooks/useFoliateEvents';
 import { useProgressSync } from '../hooks/useProgressSync';
 import { useProgressAutoSave } from '../hooks/useProgressAutoSave';
@@ -23,16 +26,20 @@ import { useKOSync } from '../hooks/useKOSync';
 import {
   applyFixedlayoutStyles,
   applyImageStyle,
+  applyScrollbarStyle,
   applyScrollModeClass,
   applyTableStyle,
   applyThemeModeClass,
   applyTranslationStyle,
   getStyles,
+  getThemeCode,
   keepTextAlignment,
   transformStylesheet,
 } from '@/utils/style';
 import { mountAdditionalFonts, mountCustomFont } from '@/styles/fonts';
+import { layoutWarichu, relayoutWarichu } from '@/utils/warichu';
 import { getBookDirFromLanguage, getBookDirFromWritingMode } from '@/utils/book';
+import { getIndexFromCfi } from '@/utils/cfi';
 import { useUICSS } from '@/hooks/useUICSS';
 import {
   handleKeydown,
@@ -44,6 +51,7 @@ import {
   handleTouchStart,
   handleTouchMove,
   handleTouchEnd,
+  addLongPressListeners,
 } from '../utils/iframeEventHandlers';
 import { getMaxInlineSize } from '@/utils/config';
 import { getDirFromUILanguage } from '@/utils/rtl';
@@ -59,9 +67,12 @@ import { getViewInsets } from '@/utils/insets';
 import { handleA11yNavigation } from '@/utils/a11y';
 import { isCJKLang } from '@/utils/lang';
 import { getLocale } from '@/utils/misc';
+import { isFontType } from '@/utils/font';
+import { ParagraphControl } from './paragraph';
 import Spinner from '@/components/Spinner';
 import KOSyncConflictResolver from './KOSyncResolver';
-import { ParagraphControl } from './paragraph';
+import ImageViewer from './ImageViewer';
+import TableViewer from './TableViewer';
 
 declare global {
   interface Window {
@@ -77,12 +88,14 @@ const FoliateViewer: React.FC<{
   contentInsets: Insets;
 }> = ({ bookKey, bookDoc, config, gridInsets, contentInsets: insets }) => {
   const _ = useTranslation();
+  const searchParams = useSearchParams();
   const { appService, envConfig } = useEnv();
   const { themeCode, isDarkMode } = useThemeStore();
   const { settings } = useSettingsStore();
-  const { loadCustomFonts, getLoadedFonts } = useCustomFontStore();
+  const { loadFont, loadCustomFonts, getLoadedFonts, getAvailableFonts } = useCustomFontStore();
   const { getView, setView: setFoliateView, setViewInited, setProgress } = useReaderStore();
-  const { getViewState, getViewSettings, setViewSettings } = useReaderStore();
+  const setPreviewMode = useReaderStore((s) => s.setPreviewMode);
+  const { getViewState, getProgress, getViewSettings, setViewSettings } = useReaderStore();
   const { getParallels } = useParallelViewStore();
   const { getBookData } = useBookDataStore();
   const { applyBackgroundTexture } = useBackgroundTexture();
@@ -97,6 +110,7 @@ const FoliateViewer: React.FC<{
   const doubleClickDisabled = useRef(!!viewSettings?.disableDoubleClick);
   const [toastMessage, setToastMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [scrollMargins, setScrollMargins] = useState({ top: 0, bottom: 0 });
   const docLoaded = useRef(false);
 
   useAutoFocus<HTMLDivElement>({ ref: containerRef });
@@ -121,12 +135,16 @@ const FoliateViewer: React.FC<{
 
   const progressRelocateHandler = (event: Event) => {
     const detail = (event as CustomEvent).detail;
+    const atEnd = viewRef.current?.renderer.atEnd || false;
+    const { current, next, total } = detail.location as PageInfo;
+    const currentPage = atEnd && total > 0 ? total - 1 : current;
+    const pageInfo = { current: currentPage, next, total };
     setProgress(
       bookKey,
       detail.cfi,
       detail.tocItem,
       detail.section,
-      detail.location,
+      pageInfo,
       detail.time,
       detail.range,
     );
@@ -148,6 +166,7 @@ const FoliateViewer: React.FC<{
               viewSettings,
               width,
               height,
+              isFixedLayout: bookData.isFixedLayout,
               primaryLanguage: bookData.book?.primaryLanguage,
               userLocale: getLocale(),
               content: data,
@@ -161,6 +180,7 @@ const FoliateViewer: React.FC<{
                 'sanitizer',
                 'simplecc',
                 'proofread',
+                'warichu',
               ],
             };
             return Promise.resolve(transformContent(ctx));
@@ -174,13 +194,30 @@ const FoliateViewer: React.FC<{
     };
   };
 
+  const skipToReadingPosition = useCallback(() => {
+    const view = getView(bookKey);
+    const progress = getProgress(bookKey);
+    if (view && progress) {
+      view.renderer.scrollToAnchor?.(progress.range);
+    }
+  }, [getView, getProgress, bookKey]);
+
+  const skipToNextSection = useCallback(() => {
+    const view = getView(bookKey);
+    const viewSettings = getViewSettings(bookKey);
+    viewPagination(view, viewSettings, 'down', 'section');
+  }, [bookKey]);
+
   const docLoadHandler = (event: Event) => {
-    setLoading(false);
     docLoaded.current = true;
+    if (bookDoc.rendition?.layout === 'pre-paginated') {
+      setLoading(false); // Fixed layout doesn't emit 'stabilized' event
+    }
     const detail = (event as CustomEvent).detail;
     console.log('doc index loaded:', detail.index);
     if (detail.doc) {
-      const writingDir = viewRef.current?.renderer.setStyles && getDirection(detail.doc);
+      const renderer = viewRef.current?.renderer;
+      const writingDir = renderer?.setStyles && getDirection(detail.doc);
       const viewSettings = getViewSettings(bookKey)!;
       const bookData = getBookData(bookKey)!;
 
@@ -207,14 +244,29 @@ const FoliateViewer: React.FC<{
 
       if (bookDoc.rendition?.layout === 'pre-paginated') {
         applyFixedlayoutStyles(detail.doc, viewSettings);
+        const themeCode = getThemeCode();
+        if (bookData.book?.format === 'PDF' && themeCode && renderer) {
+          renderer.pageColors = viewSettings.applyThemeToPDF
+            ? {
+                background: themeCode.bg,
+                foreground: themeCode.fg,
+              }
+            : undefined;
+        }
       }
 
       applyImageStyle(detail.doc);
       applyTableStyle(detail.doc);
       applyThemeModeClass(detail.doc, isDarkMode);
       applyScrollModeClass(detail.doc, viewSettings.scrolled || false);
+      applyScrollbarStyle(document, viewSettings.hideScrollbar || false);
       keepTextAlignment(detail.doc);
-      handleA11yNavigation(viewRef.current, detail.doc, detail.index);
+      handleA11yNavigation(viewRef.current, detail.doc, {
+        skipToLastPosCallback: skipToReadingPosition,
+        skipToLastPosLabel: _('Skip to last reading position'),
+        skipToNextSectionCallback: skipToNextSection,
+        skipToNextSectionLabel: _('End of this section. Continue to the next.'),
+      });
 
       // Inline scripts in tauri platforms are not executed by default
       if (viewSettings.allowScript && isTauriAppPlatform()) {
@@ -227,10 +279,23 @@ const FoliateViewer: React.FC<{
       }
 
       setTimeout(() => {
+        const sectionIndex = detail.index;
         const booknotes = config.booknotes || [];
         booknotes
-          .filter((item) => !item.deletedAt && item.type === 'annotation' && item.style)
-          .forEach((annotation) => viewRef.current?.addAnnotation(annotation));
+          .filter(
+            (item) =>
+              !item.deletedAt &&
+              item.type === 'annotation' &&
+              item.style &&
+              getIndexFromCfi(item.cfi) === sectionIndex,
+          )
+          .map((annotation) => {
+            try {
+              viewRef.current?.addAnnotation(annotation);
+            } catch (err) {
+              console.warn('Failed to add annotation', { annotation, error: err });
+            }
+          });
       }, 100);
 
       if (!detail.doc.isEventListenersAdded) {
@@ -243,10 +308,13 @@ const FoliateViewer: React.FC<{
         detail.doc.addEventListener('mousedown', handleMousedown.bind(null, bookKey));
         detail.doc.addEventListener('mouseup', handleMouseup.bind(null, bookKey));
         detail.doc.addEventListener('click', handleClick.bind(null, bookKey, doubleClickDisabled));
-        detail.doc.addEventListener('wheel', handleWheel.bind(null, bookKey));
+        // passive: false so handleWheel can preventDefault for mouse-wheel
+        // events and replace the native jerky scroll with a smooth animation.
+        detail.doc.addEventListener('wheel', handleWheel.bind(null, bookKey), { passive: false });
         detail.doc.addEventListener('touchstart', handleTouchStart.bind(null, bookKey));
         detail.doc.addEventListener('touchmove', handleTouchMove.bind(null, bookKey));
         detail.doc.addEventListener('touchend', handleTouchEnd.bind(null, bookKey));
+        addLongPressListeners(bookKey, detail.doc);
       }
     }
   };
@@ -267,9 +335,31 @@ const FoliateViewer: React.FC<{
     }
   };
 
+  const stabilizedHandler = useCallback(() => {
+    setLoading(false);
+    // Layout/relayout warichu after paginator has set column-width via columnize()
+    const contents = viewRef.current?.renderer?.getContents?.() || [];
+    for (const { doc } of contents) {
+      if (doc) {
+        const hasPending = doc.querySelectorAll('.warichu-pending').length > 0;
+        const hasExisting = doc.querySelectorAll('.warichu-head').length > 0;
+        if (hasPending) {
+          layoutWarichu(doc);
+        } else if (hasExisting) {
+          relayoutWarichu(doc);
+        }
+      }
+    }
+  }, []);
+
   const docRelocateHandler = (event: Event) => {
     const detail = (event as CustomEvent).detail;
     if (detail.reason !== 'scroll' && detail.reason !== 'page') return;
+
+    // First user-initiated navigation after a deep-link landing — promote
+    // the preview into the real reading position. Subsequent progress writes
+    // can flow normally.
+    setPreviewMode(bookKey, false);
 
     const parallelViews = getParallels(bookKey);
     if (parallelViews && parallelViews.size > 0) {
@@ -284,12 +374,111 @@ const FoliateViewer: React.FC<{
     }
   };
 
-  const { handlePageFlip, handleContinuousScroll } = usePagination(bookKey, viewRef, containerRef);
-  const mouseHandlers = useMouseEvent(bookKey, handlePageFlip, handleContinuousScroll);
-  const touchHandlers = useTouchEvent(bookKey, handlePageFlip, handleContinuousScroll);
+  const { handlePageFlip } = usePagination(bookKey, viewRef, containerRef);
+  const mouseHandlers = useMouseEvent(bookKey, handlePageFlip);
+  const touchHandlers = useTouchEvent(bookKey);
+
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedTableHtml, setSelectedTableHtml] = useState<string | null>(null);
+  const [imageList, setImageList] = useState<{ src: string; cfi: string | null }[]>([]);
+  const [currentImageIndex, setCurrentImageIndex] = useState<number>(0);
+
+  const handleImagePress = useCallback(async (src: string) => {
+    try {
+      // Get all images from the current document
+      const docs = viewRef.current?.renderer.getContents();
+      const allImages: { src: string; cfi: string | null }[] = [];
+
+      docs?.forEach(({ doc, index }) => {
+        const elements = doc.querySelectorAll('img, svg');
+        elements.forEach((el) => {
+          if (index === undefined) return;
+          if (el.localName === 'img') {
+            const img = el as HTMLImageElement;
+            if (img.src && img.parentNode) {
+              const range = doc.createRange();
+              range.selectNodeContents(img);
+              const cfi = viewRef.current?.getCFI(index, range) || null;
+              allImages.push({ src: img.src, cfi });
+            }
+          } else if (el.localName === 'svg') {
+            const svg = el as unknown as SVGSVGElement;
+            const svgImage = svg.querySelector('image');
+            const href =
+              svgImage?.getAttribute('href') ||
+              svgImage?.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+            if (href) {
+              const range = doc.createRange();
+              range.selectNodeContents(svg);
+              const cfi = viewRef.current?.getCFI(index, range) || null;
+              allImages.push({ src: href, cfi });
+            }
+          }
+        });
+      });
+
+      // Find the index of the pressed image
+      const index = allImages.findIndex((img) => img.src === src);
+
+      setImageList(allImages);
+      setCurrentImageIndex(index >= 0 ? index : 0);
+
+      const dataUrl = await convertBlobUrlToDataUrl(src);
+      setSelectedImage(dataUrl);
+    } catch (error) {
+      console.error('Failed to load image:', error);
+    }
+  }, []);
+
+  const handleTablePress = useCallback((html: string) => {
+    setSelectedTableHtml(html);
+  }, []);
+
+  const handlePreviousImage = useCallback(async () => {
+    if (currentImageIndex > 0 && imageList.length > 0) {
+      const newIndex = currentImageIndex - 1;
+      setCurrentImageIndex(newIndex);
+      try {
+        const { src, cfi } = imageList[newIndex]!;
+        const dataUrl = await convertBlobUrlToDataUrl(src);
+        setSelectedImage(dataUrl);
+        if (cfi && viewRef.current) {
+          viewRef.current?.goTo(cfi);
+        }
+      } catch (error) {
+        console.error('Failed to load previous image:', error);
+      }
+    }
+  }, [currentImageIndex, imageList]);
+
+  const handleNextImage = useCallback(async () => {
+    if (currentImageIndex < imageList.length - 1 && imageList.length > 0) {
+      const newIndex = currentImageIndex + 1;
+      setCurrentImageIndex(newIndex);
+      try {
+        const { src, cfi } = imageList[newIndex]!;
+        const dataUrl = await convertBlobUrlToDataUrl(src);
+        setSelectedImage(dataUrl);
+        if (cfi && viewRef.current) {
+          viewRef.current?.goTo(cfi);
+        }
+      } catch (error) {
+        console.error('Failed to load next image:', error);
+      }
+    }
+  }, [currentImageIndex, imageList]);
+
+  const handleCloseImage = useCallback(() => {
+    setSelectedImage(null);
+    setImageList([]);
+    setCurrentImageIndex(0);
+  }, []);
+
+  useLongPressEvent(bookKey, handleImagePress, handleTablePress);
 
   useFoliateEvents(viewRef.current, {
     onLoad: docLoadHandler,
+    onStabilized: stabilizedHandler,
     onRelocate: progressRelocateHandler,
     onRendererRelocate: docRelocateHandler,
   });
@@ -332,10 +521,31 @@ const FoliateViewer: React.FC<{
 
       const { book } = view;
 
-      book.transformTarget?.addEventListener('load', (event: Event) => {
-        const { detail } = event as CustomEvent;
+      book.transformTarget?.addEventListener('load', async (event: Event) => {
+        const { detail } = event as CustomEvent<{
+          isScript: boolean;
+          type: string;
+          href: string;
+          url?: string;
+          allow?: boolean;
+        }>;
         if (detail.isScript) {
           detail.allow = viewSettings.allowScript ?? false;
+        }
+        if (isFontType(detail.type) && detail.href?.startsWith('fonts/')) {
+          const fontFileName = detail.href.split('/').pop()?.toLowerCase();
+          getAvailableFonts().forEach(async (font) => {
+            const customFontFileName = font.path.split('/').pop()?.toLowerCase();
+            if (fontFileName && fontFileName === customFontFileName) {
+              if (!font.loaded) {
+                const loadedFont = await loadFont(envConfig, font.id);
+                font.blobUrl = loadedFont?.blobUrl;
+              }
+              if (font.blobUrl) {
+                detail.url = font.blobUrl;
+              }
+            }
+          });
         }
       });
       const viewWidth = appService?.isMobile ? screen.width : window.innerWidth;
@@ -380,13 +590,33 @@ const FoliateViewer: React.FC<{
       }
       applyMarginAndGap();
 
-      const lastLocation = config.location;
+      // If the URL carries ?cfi=... (e.g. opened from a deep link / annotation
+      // export link), use it as the initial location instead of the saved one.
+      // Only applies to the primary book — first id in the route's `ids` —
+      // so parallel views don't all jump to the same CFI.
+      const cfiParam = searchParams?.get('cfi');
+      const idsParam =
+        searchParams?.get('ids') ?? window.location.pathname.split('/reader/')[1] ?? '';
+      const primaryId = idsParam.split(BOOK_IDS_SEPARATOR).filter(Boolean)[0];
+      const thisId = bookKey.split('-')[0];
+      const overrideLocation = cfiParam && primaryId === thisId ? cfiParam : null;
+
+      const lastLocation = overrideLocation ?? config.location;
       if (lastLocation) {
         await view.init({ lastLocation });
       } else {
         await view.goToFraction(0);
       }
       setViewInited(bookKey, true);
+
+      // The reader is showing a deep-link target, not the user's actual reading
+      // position. Mark the view as a preview so progress writers (auto-save,
+      // cloud sync, kosync) skip until the user takes a reading action. The
+      // flag clears on the first user-initiated relocate (page / scroll) in
+      // docRelocateHandler below.
+      if (overrideLocation) {
+        setPreviewMode(bookKey, true);
+      }
     };
 
     openBook();
@@ -406,7 +636,7 @@ const FoliateViewer: React.FC<{
     const ttsBarHeight =
       viewState?.ttsEnabled && viewSettings.showTTSBar ? 52 + gridInsets.bottom * 0.33 : 0;
     const moreBottomInset = showBottomFooter
-      ? Math.max(0, Math.max(ttsBarHeight, 44) - insets.bottom)
+      ? Math.max(0, Math.max(ttsBarHeight, 52) - insets.bottom)
       : Math.max(0, ttsBarHeight);
     const moreRightInset = showDoubleBorderHeader ? 32 : 0;
     const moreLeftInset = showDoubleBorderFooter ? 32 : 0;
@@ -420,14 +650,32 @@ const FoliateViewer: React.FC<{
     viewRef.current?.renderer.setAttribute('margin-right', `${rightMargin}px`);
     viewRef.current?.renderer.setAttribute('margin-bottom', `${viewMargins ? 0 : bottomMargin}px`);
     viewRef.current?.renderer.setAttribute('margin-left', `${leftMargin}px`);
+    if (viewMargins) {
+      const showBarsOnScroll = viewSettings.showBarsOnScroll;
+      const headerVisible = showTopHeader && showBarsOnScroll;
+      const footerVisible = showBottomFooter && showBarsOnScroll;
+      const safeBottomPadding = appService?.hasSafeAreaInset ? gridInsets.bottom * 0.33 : 0;
+      const footerBarHeight = 52 + safeBottomPadding;
+      const scrollTop = headerVisible ? gridInsets.top + 44 : 0;
+      const scrollBottom = footerVisible ? Math.max(footerBarHeight, ttsBarHeight) : ttsBarHeight;
+      setScrollMargins({ top: scrollTop, bottom: scrollBottom });
+    } else {
+      setScrollMargins({ top: 0, bottom: 0 });
+    }
     viewRef.current?.renderer.setAttribute('gap', `${viewSettings.gapPercent}%`);
     if (viewSettings.scrolled) {
       viewRef.current?.renderer.setAttribute('flow', 'scrolled');
+      if (viewSettings.noContinuousScroll) {
+        viewRef.current?.renderer.setAttribute('no-continuous-scroll', '');
+      } else {
+        viewRef.current?.renderer.removeAttribute('no-continuous-scroll');
+      }
     }
   };
 
   useEffect(() => {
     if (viewRef.current && viewRef.current.renderer) {
+      const renderer = viewRef.current.renderer;
       const viewSettings = getViewSettings(bookKey)!;
       viewRef.current.renderer.setStyles?.(getStyles(viewSettings));
       const docs = viewRef.current.renderer.getContents();
@@ -437,7 +685,17 @@ const FoliateViewer: React.FC<{
         }
         applyThemeModeClass(doc, isDarkMode);
         applyScrollModeClass(doc, viewSettings.scrolled || false);
+        applyScrollbarStyle(document, viewSettings.hideScrollbar || false);
       });
+
+      if (bookData?.book?.format === 'PDF' && themeCode && renderer) {
+        renderer.pageColors = viewSettings.applyThemeToPDF
+          ? {
+              background: themeCode.bg,
+              foreground: themeCode.fg,
+            }
+          : undefined;
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -446,6 +704,8 @@ const FoliateViewer: React.FC<{
     viewSettings?.scrolled,
     viewSettings?.overrideColor,
     viewSettings?.invertImgColorInDark,
+    viewSettings?.applyThemeToPDF,
+    viewSettings?.hideScrollbar,
   ]);
 
   useEffect(() => {
@@ -494,28 +754,53 @@ const FoliateViewer: React.FC<{
     viewSettings?.showHeader,
     viewSettings?.showFooter,
     viewSettings?.showTTSBar,
+    viewSettings?.showBarsOnScroll,
+    viewSettings?.showMarginsOnScroll,
+    viewSettings?.scrolled,
+    viewSettings?.noContinuousScroll,
     viewState?.ttsEnabled,
   ]);
 
-  const showViewMargins = viewSettings?.showMarginsOnScroll && viewSettings?.scrolled;
-
   return (
     <>
+      {selectedImage && (
+        <ImageViewer
+          gridInsets={gridInsets}
+          src={selectedImage}
+          onClose={handleCloseImage}
+          onPrevious={currentImageIndex > 0 ? handlePreviousImage : undefined}
+          onNext={currentImageIndex < imageList.length - 1 ? handleNextImage : undefined}
+        />
+      )}
+      {selectedTableHtml && (
+        <TableViewer
+          gridInsets={gridInsets}
+          html={selectedTableHtml}
+          isDarkMode={isDarkMode}
+          onClose={() => setSelectedTableHtml(null)}
+        />
+      )}
       <div
         ref={containerRef}
-        tabIndex={-1}
-        role='document'
+        role='main'
         aria-label={_('Book Content')}
-        className='foliate-viewer h-[100%] w-[100%] focus:outline-none'
+        className={clsx(
+          'foliate-viewer absolute h-[100%] w-[100%] focus:outline-none',
+          viewState?.loading && 'bg-base-100',
+        )}
         style={{
-          paddingTop: showViewMargins ? insets.top : 0,
-          paddingBottom: showViewMargins ? insets.bottom : 0,
+          paddingTop: scrollMargins.top,
+          paddingBottom: scrollMargins.bottom,
         }}
         {...mouseHandlers}
         {...touchHandlers}
       />
       <ParagraphControl bookKey={bookKey} viewRef={viewRef} gridInsets={gridInsets} />
-      {!docLoaded.current && loading && <Spinner loading={true} />}
+      {((!docLoaded.current && loading) || viewState?.loading) && (
+        <div className='absolute left-0 top-0 z-10 flex h-full w-full items-center justify-center'>
+          <Spinner loading={true} />
+        </div>
+      )}
       {syncState === 'conflict' && conflictDetails && (
         <KOSyncConflictResolver
           details={conflictDetails}

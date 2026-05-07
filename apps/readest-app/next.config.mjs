@@ -1,5 +1,9 @@
 import withSerwistInit from '@serwist/next';
 import withBundleAnalyzer from '@next/bundle-analyzer';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const isDev = process.env['NODE_ENV'] === 'development';
 const appPlatform = process.env['NEXT_PUBLIC_APP_PLATFORM'];
@@ -27,16 +31,27 @@ const nextConfig = {
   assetPrefix: '',
   reactStrictMode: true,
   serverExternalPackages: ['isows'],
+  allowedDevOrigins: ['192.168.2.120'],
   webpack: (config) => {
     config.resolve.alias = {
       ...config.resolve.alias,
       nunjucks: 'nunjucks/browser/nunjucks.js',
+      // `js-mdict` is consumed as TS source via tsconfig paths from
+      // `packages/js-mdict/src/`; its sources `import 'fflate'` directly.
+      // Without an alias, webpack walks up from that source location and
+      // can't find fflate (only installed in this app's node_modules).
+      fflate: path.resolve(__dirname, 'node_modules/fflate'),
+      ...(appPlatform !== 'web' ? { '@tursodatabase/database-wasm': false } : {}),
     };
     return config;
   },
   turbopack: {
     resolveAlias: {
       nunjucks: 'nunjucks/browser/nunjucks.js',
+      // Turbopack rejects absolute paths in resolveAlias ("server relative
+      // imports not implemented") — use a project-relative path.
+      fflate: './node_modules/fflate',
+      ...(appPlatform !== 'web' ? { '@tursodatabase/database-wasm': './src/utils/stub.ts' } : {}),
     },
   },
   transpilePackages: [
@@ -62,6 +77,22 @@ const nextConfig = {
   ...(exportOutput
     ? {}
     : {
+        async rewrites() {
+          return [
+            {
+              source: '/reader/:ids',
+              destination: '/reader?ids=:ids',
+            },
+            {
+              source: '/o/book/:hash/annotation/:id',
+              destination: '/o?book=:hash&note=:id',
+            },
+            {
+              source: '/s/:token',
+              destination: '/s?token=:token',
+            },
+          ];
+        },
         async headers() {
           return [
             {

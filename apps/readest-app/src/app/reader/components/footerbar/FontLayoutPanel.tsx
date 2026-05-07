@@ -32,6 +32,7 @@ interface FontLayoutPanelProps {
   actionTab: string;
   bottomOffset: string;
   marginIconSize: number;
+  forceMobileLayout: boolean;
 }
 
 export const FontLayoutPanel: React.FC<FontLayoutPanelProps> = ({
@@ -39,9 +40,10 @@ export const FontLayoutPanel: React.FC<FontLayoutPanelProps> = ({
   actionTab,
   bottomOffset,
   marginIconSize,
+  forceMobileLayout,
 }) => {
   const _ = useTranslation();
-  const { envConfig } = useEnv();
+  const { envConfig, appService } = useEnv();
   const { getView, getViewSettings } = useReaderStore();
   const viewSettings = getViewSettings(bookKey);
   const view = getView(bookKey);
@@ -91,14 +93,23 @@ export const FontLayoutPanel: React.FC<FontLayoutPanelProps> = ({
   }, []);
 
   const classes = clsx(
-    'footerbar-font-mobile bg-base-200 absolute flex w-full flex-col items-center gap-y-8 px-4 transition-all sm:hidden',
+    'footerbar-font-mobile not-eink:bg-base-200 eink:bg-base-100 absolute flex w-full flex-col items-center gap-y-8 px-4 transition-all',
+    'eink:border-base-content eink:border-t',
+    !forceMobileLayout && 'sm:hidden',
     actionTab === 'font'
       ? 'pointer-events-auto translate-y-0 pb-4 pt-8 ease-out'
       : 'pointer-events-none invisible translate-y-full overflow-hidden pb-0 pt-0 ease-in',
   );
 
   return (
-    <div className={classes} style={{ bottom: bottomOffset }}>
+    <div
+      className={classes}
+      style={{
+        bottom: appService?.isAndroidApp
+          ? `calc(env(safe-area-inset-bottom) + 64px)`
+          : bottomOffset,
+      }}
+    >
       <Slider
         label={_('Font Size')}
         initialValue={viewSettings?.defaultFontSize ?? FONT_SIZE_LIMITS.DEFAULT}

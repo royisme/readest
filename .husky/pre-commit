@@ -1,2 +1,1 @@
-#!/usr/bin/env sh
-./scripts/prettier-staged.sh
+pnpm exec lint-staged

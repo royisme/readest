@@ -1,11 +1,15 @@
 import { FileSystem, BaseDir, AppPlatform, ResolvedPath, FileItem } from '@/types/system';
+import { DatabaseOpts, DatabaseService } from '@/types/database';
+import { SchemaType } from '@/services/database/migrate';
 import { getOSPlatform, isValidURL } from '@/utils/misc';
+import { isSafariBrowser } from '@/utils/ua';
 import { RemoteFile } from '@/utils/file';
 import { isPWA } from './environment';
 import { BaseAppService } from './appService';
 import {
   DATA_SUBDIR,
   LOCAL_BOOKS_SUBDIR,
+  LOCAL_DICTIONARIES_SUBDIR,
   LOCAL_FONTS_SUBDIR,
   LOCAL_IMAGES_SUBDIR,
 } from './constants';
@@ -22,6 +26,8 @@ const resolvePath = (path: string, base: BaseDir): ResolvedPath => {
       return { baseDir: 0, basePrefix, fp: `${LOCAL_FONTS_SUBDIR}/${path}`, base };
     case 'Images':
       return { baseDir: 0, basePrefix, fp: `${LOCAL_IMAGES_SUBDIR}/${path}`, base };
+    case 'Dictionaries':
+      return { baseDir: 0, basePrefix, fp: `${LOCAL_DICTIONARIES_SUBDIR}/${path}`, base };
     case 'None':
       return { baseDir: 0, basePrefix, fp: path, base };
     default:
@@ -82,22 +88,23 @@ const indexedDBFileSystem: FileSystem = {
       return new File([content], filename || path);
     }
   },
-  async copyFile(srcPath: string, dstPath: string, base: BaseDir) {
-    const { fp } = this.resolvePath(dstPath, base);
+  async copyFile(srcPath: string, srcBase: BaseDir, dstPath: string, dstBase: BaseDir) {
+    const { fp: srcFp } = this.resolvePath(srcPath, srcBase);
+    const { fp: dstFp } = this.resolvePath(dstPath, dstBase);
     const db = await openIndexedDB();
 
     return new Promise<void>((resolve, reject) => {
       const transaction = db.transaction('files', 'readwrite');
       const store = transaction.objectStore('files');
-      const getRequest = store.get(srcPath);
+      const getRequest = store.get(srcFp);
 
       getRequest.onsuccess = () => {
         const data = getRequest.result;
         if (data) {
-          store.put({ path: fp, content: data.content });
+          store.put({ path: dstFp, content: data.content });
           resolve();
         } else {
-          reject(new Error(`File not found: ${srcPath}`));
+          reject(new Error(`File not found: ${srcFp}`));
         }
       };
 
@@ -195,6 +202,7 @@ const indexedDBFileSystem: FileSystem = {
   },
   async readDir(path: string, base: BaseDir) {
     const { fp } = this.resolvePath(path, base);
+    const prefix = fp.endsWith('/') ? fp : `${fp}/`;
     const db = await openIndexedDB();
 
     return new Promise<FileItem[]>((resolve, reject) => {
@@ -206,9 +214,9 @@ const indexedDBFileSystem: FileSystem = {
         const files = request.result as { path: string; content: string | ArrayBuffer | Blob }[];
         resolve(
           files
-            .filter((file) => file.path.startsWith(fp))
+            .filter((file) => file.path.startsWith(prefix))
             .map((file) => ({
-              path: file.path.slice(fp.length + 1),
+              path: file.path.slice(prefix.length),
               size:
                 file.content instanceof Blob
                   ? file.content.size
@@ -280,6 +288,7 @@ export class WebAppService extends BaseAppService {
   fs = indexedDBFileSystem;
   override isMobile = ['android', 'ios'].includes(getOSPlatform());
   override appPlatform = 'web' as AppPlatform;
+  override supportsCanvasContext2DFilter = !isSafariBrowser();
   override hasSafeAreaInset = isPWA();
 
   override async init() {
@@ -325,10 +334,10 @@ export class WebAppService extends BaseAppService {
   async saveFile(
     filename: string,
     content: string | ArrayBuffer,
-    mimeType?: string,
+    options?: { filePath?: string; mimeType?: string },
   ): Promise<boolean> {
     try {
-      const blob = new Blob([content], { type: mimeType || 'application/octet-stream' });
+      const blob = new Blob([content], { type: options?.mimeType || 'application/octet-stream' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -346,5 +355,24 @@ export class WebAppService extends BaseAppService {
 
   async ask(message: string): Promise<boolean> {
     return window.confirm(message);
+  }
+
+  async openDatabase(
+    schema: SchemaType,
+    path: string,
+    base: BaseDir,
+    opts?: DatabaseOpts,
+  ): Promise<DatabaseService> {
+    const fullPath = await this.resolveFilePath(path, base);
+    // OPFS `getFileHandle` rejects names containing path separators, and the
+    // Turso WASM connector passes the whole string as a single OPFS handle
+    // name without traversing directories. Flatten to a safe single segment.
+    const opfsName = fullPath.replace(/[/\\]+/g, '_').replace(/^_+/, '');
+    const { WebDatabaseService } = await import('./database/webDatabaseService');
+    const db = await WebDatabaseService.open(opfsName, opts);
+    const { migrate } = await import('./database/migrate');
+    const { getMigrations } = await import('./database/migrations');
+    await migrate(db, getMigrations(schema));
+    return db;
   }
 }

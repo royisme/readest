@@ -1,12 +1,17 @@
 import clsx from 'clsx';
 import React, { useEffect, useState } from 'react';
+import { MdChevronRight } from 'react-icons/md';
 import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
 import { useReaderStore } from '@/store/readerStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { saveViewSettings } from '@/helpers/settings';
-import { getTranslators } from '@/services/translators';
+import {
+  getTranslatorDisplayLabel,
+  getTranslators,
+  isTranslatorAvailable,
+} from '@/services/translators';
 import { useResetViewSettings } from '@/hooks/useResetSettings';
 import { TRANSLATED_LANGS, TRANSLATOR_LANGS } from '@/services/constants';
 import { ConvertChineseVariant } from '@/types/book';
@@ -14,12 +19,14 @@ import { SettingsPanelPanelProp } from './SettingsDialog';
 import { getDirFromLanguage } from '@/utils/rtl';
 import { isCJKEnv } from '@/utils/misc';
 import Select from '@/components/Select';
+import CustomDictionaries from './CustomDictionaries';
 
 const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset }) => {
   const _ = useTranslation();
   const { token } = useAuth();
   const { envConfig } = useEnv();
-  const { settings, applyUILanguage } = useSettingsStore();
+  const { settings, applyUILanguage, activeSettingsItemId, setActiveSettingsItemId } =
+    useSettingsStore();
   const { getView, getViewSettings, setViewSettings, recreateViewer } = useReaderStore();
   const view = getView(bookKey);
   const viewSettings = getViewSettings(bookKey) || settings.globalViewSettings;
@@ -36,6 +43,19 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
   const [convertChineseVariant, setConvertChineseVariant] = useState(
     viewSettings.convertChineseVariant,
   );
+  const [showCustomDictionaries, setShowCustomDictionaries] = useState(false);
+
+  // Deep-link: callers (e.g. the dictionary popup's manage icon) can set
+  // activeSettingsItemId to `'settings.language.dictionaries.manage'` to
+  // jump straight into the Manage Dictionaries sub-page on open. Clear the
+  // id once consumed so SettingsDialog's scroll-to-element fallback
+  // (which runs on a 100ms timeout) doesn't re-fire.
+  useEffect(() => {
+    if (activeSettingsItemId === 'settings.language.dictionaries.manage') {
+      setShowCustomDictionaries(true);
+      setActiveSettingsItemId(null);
+    }
+  }, [activeSettingsItemId, setActiveSettingsItemId]);
 
   const resetToDefaults = useResetViewSettings();
 
@@ -80,25 +100,19 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
   };
 
   const getTranslationProviderOptions = () => {
-    const translators = getTranslators();
-    const availableProviders = translators.map((t) => {
-      let label = t.label;
-      if (t.authRequired && !token) {
-        label = `${label} (${_('Login Required')})`;
-      } else if (t.quotaExceeded) {
-        label = `${label} (${_('Quota Exceeded')})`;
-      }
-      return { value: t.name, label };
-    });
-    return availableProviders;
+    return getTranslators().map((t) => ({
+      value: t.name,
+      label: getTranslatorDisplayLabel(t, !!token, _),
+      // Providers marked `disabled` (e.g. upstream relay is down) stay in the
+      // dropdown so users can see them, but cannot be selected.
+      disabled: !!t.disabled,
+    }));
   };
 
   const getCurrentTranslationProviderOption = () => {
     const value = translationProvider;
     const allProviders = getTranslationProviderOptions();
-    const availableTranslators = getTranslators().filter(
-      (t) => (t.authRequired ? !!token : true) && !t.quotaExceeded,
-    );
+    const availableTranslators = getTranslators().filter((t) => isTranslatorAvailable(t, !!token));
     const currentProvider = availableTranslators.find((t) => t.name === value)
       ? value
       : availableTranslators[0]?.name;
@@ -244,6 +258,14 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [convertChineseVariant]);
 
+  if (showCustomDictionaries) {
+    return (
+      <div className='my-4 w-full'>
+        <CustomDictionaries onBack={() => setShowCustomDictionaries(false)} />
+      </div>
+    );
+  }
+
   return (
     <div className={clsx('my-4 w-full space-y-6')}>
       <div className='w-full' data-setting-id='settings.language.interfaceLanguage'>
@@ -258,6 +280,22 @@ const LangPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
                 options={getLangOptions(TRANSLATED_LANGS)}
               />
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className='w-full' data-setting-id='settings.language.dictionaries'>
+        <h2 className='mb-2 font-medium'>{_('Dictionaries')}</h2>
+        <div className='card border-base-200 bg-base-100 border shadow'>
+          <div className='divide-base-200 divide-y'>
+            <button
+              type='button'
+              className='config-item hover:bg-base-200/40 w-full text-left'
+              onClick={() => setShowCustomDictionaries(true)}
+            >
+              <span>{_('Manage Dictionaries')}</span>
+              <MdChevronRight className='text-base-content/60 h-5 w-5' />
+            </button>
           </div>
         </div>
       </div>

@@ -4,9 +4,10 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { BiMoon, BiSun } from 'react-icons/bi';
 import { TbSunMoon } from 'react-icons/tb';
-import { MdZoomOut, MdZoomIn, MdCheck } from 'react-icons/md';
+import { MdZoomOut, MdZoomIn, MdCheck, MdInfoOutline } from 'react-icons/md';
 import { MdSync, MdSyncProblem } from 'react-icons/md';
 import { IoMdExpand } from 'react-icons/io';
+import { IoShareOutline } from 'react-icons/io5';
 import { TbArrowAutofitWidth } from 'react-icons/tb';
 import { TbColumns1, TbColumns2 } from 'react-icons/tb';
 
@@ -22,7 +23,7 @@ import { getStyles } from '@/utils/style';
 import { navigateToLogin } from '@/utils/nav';
 import { eventDispatcher } from '@/utils/event';
 import { getMaxInlineSize } from '@/utils/config';
-import { formatLocaleDateTime } from '@/utils/book';
+import dayjs from 'dayjs';
 import { saveViewSettings } from '@/helpers/settings';
 import { tauriHandleToggleFullScreen } from '@/utils/window';
 import MenuItem from '@/components/MenuItem';
@@ -31,16 +32,21 @@ import Menu from '@/components/Menu';
 interface ViewMenuProps {
   bookKey: string;
   setIsDropdownOpen?: (open: boolean) => void;
+  onShowMetaHashDialog?: () => void;
 }
 
-const ViewMenu: React.FC<ViewMenuProps> = ({ bookKey, setIsDropdownOpen }) => {
+const ViewMenu: React.FC<ViewMenuProps> = ({
+  bookKey,
+  setIsDropdownOpen,
+  onShowMetaHashDialog,
+}) => {
   const _ = useTranslation();
   const router = useRouter();
   const { user } = useAuth();
   const { envConfig, appService } = useEnv();
   const { getConfig, getBookData } = useBookDataStore();
   const { setSettingsDialogOpen, setSettingsDialogBookKey } = useSettingsStore();
-  const { getView, getViewSettings, getViewState, setViewSettings } = useReaderStore();
+  const { getView, getViewSettings, getViewState, getProgress, setViewSettings } = useReaderStore();
   const config = getConfig(bookKey)!;
   const bookData = getBookData(bookKey)!;
   const viewSettings = getViewSettings(bookKey)!;
@@ -58,6 +64,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ bookKey, setIsDropdownOpen }) => {
   const [invertImgColorInDark, setInvertImgColorInDark] = useState(
     viewSettings!.invertImgColorInDark,
   );
+  const [applyThemeToPDF, setApplyThemeToPDF] = useState(viewSettings!.applyThemeToPDF!);
 
   const zoomIn = () => setZoomLevel((prev) => Math.min(prev + ZOOM_STEP, MAX_ZOOM_LEVEL));
   const zoomOut = () => setZoomLevel((prev) => Math.max(prev - ZOOM_STEP, MIN_ZOOM_LEVEL));
@@ -99,6 +106,16 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ bookKey, setIsDropdownOpen }) => {
     eventDispatcher.dispatch('rsvp-start', { bookKey });
   };
 
+  const handleShare = () => {
+    setIsDropdownOpen?.(false);
+    if (!bookData?.book) return;
+    const progress = getProgress(bookKey);
+    eventDispatcher.dispatch('show-share-dialog', {
+      book: bookData.book,
+      cfi: progress?.location ?? null,
+    });
+  };
+
   useEffect(() => {
     if (isScrolledMode === viewSettings!.scrolled) return;
     viewSettings!.scrolled = isScrolledMode;
@@ -113,6 +130,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ bookKey, setIsDropdownOpen }) => {
   }, [isScrolledMode]);
 
   useEffect(() => {
+    if (zoomLevel === viewSettings.zoomLevel) return;
     saveViewSettings(envConfig, bookKey, 'zoomLevel', zoomLevel, true, true);
     if (bookData.bookDoc?.rendition?.layout === 'pre-paginated') {
       getView(bookKey)?.renderer.setAttribute('scale-factor', zoomLevel);
@@ -125,6 +143,12 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ bookKey, setIsDropdownOpen }) => {
     saveViewSettings(envConfig, bookKey, 'invertImgColorInDark', invertImgColorInDark, true, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invertImgColorInDark]);
+
+  useEffect(() => {
+    if (applyThemeToPDF === viewSettings.applyThemeToPDF) return;
+    saveViewSettings(envConfig, bookKey, 'applyThemeToPDF', applyThemeToPDF, true, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyThemeToPDF]);
 
   useEffect(() => {
     if (zoomMode === viewSettings.zoomMode) return;
@@ -156,12 +180,17 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ bookKey, setIsDropdownOpen }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keepCoverSpread]);
 
-  const lastSyncTime = Math.max(config?.lastSyncedAtConfig || 0, config?.lastSyncedAtNotes || 0);
+  const lastSyncTime = Math.max(
+    config?.lastSyncedAtConfig || 0,
+    config?.lastSyncedAtNotes || 0,
+    config?.lastPushedAtConfig || 0,
+    config?.lastPushedAtNotes || 0,
+  );
 
   return (
     <Menu
       className={clsx(
-        'view-menu dropdown-content dropdown-right no-triangle z-20 mt-1 border',
+        'view-menu dropdown-content dropdown-right no-triangle z-20 mt-1.5 border',
         'bgcolor-base-200 shadow-2xl',
       )}
       style={{
@@ -193,7 +222,7 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ bookKey, setIsDropdownOpen }) => {
               )}
               onClick={resetZoom}
             >
-              {zoomLevel}%
+              {Math.round(zoomLevel)}%
             </button>
             <button
               title={_('Zoom In')}
@@ -273,7 +302,6 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ bookKey, setIsDropdownOpen }) => {
         shortcut='Shift+J'
         Icon={isScrolledMode ? MdCheck : undefined}
         onClick={toggleScrolledMode}
-        disabled={bookData.isFixedLayout}
       />
 
       <hr aria-hidden='true' className='border-base-300 my-1' />
@@ -299,14 +327,27 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ bookKey, setIsDropdownOpen }) => {
           !user
             ? _('Sign in to Sync')
             : lastSyncTime
-              ? _('Synced at {{time}}', {
-                  time: formatLocaleDateTime(lastSyncTime),
+              ? _('Synced {{time}}', {
+                  time: dayjs(lastSyncTime).fromNow(),
                 })
               : _('Never synced')
         }
         Icon={user ? MdSync : MdSyncProblem}
         iconClassName={user && viewState?.syncing ? 'animate-reverse-spin' : ''}
         onClick={handleSync}
+        siblings={
+          <button
+            aria-label={_('Sync Info')}
+            title={_('Sync Info')}
+            className='hover:bg-base-300 text-base-content/70 mx-1 rounded-md px-2'
+            onClick={() => {
+              setIsDropdownOpen?.(false);
+              onShowMetaHashDialog?.();
+            }}
+          >
+            <MdInfoOutline size={16} />
+          </button>
+        }
       />
 
       <hr aria-hidden='true' className='border-base-300 my-1' />
@@ -323,12 +364,23 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ bookKey, setIsDropdownOpen }) => {
         Icon={themeMode === 'dark' ? BiMoon : themeMode === 'light' ? BiSun : TbSunMoon}
         onClick={cycleThemeMode}
       />
+      {bookData.book?.format === 'PDF' && appService?.supportsCanvasContext2DFilter && (
+        <MenuItem
+          label={_('Apply Theme Colors to PDF')}
+          Icon={applyThemeToPDF ? MdCheck : undefined}
+          onClick={() => setApplyThemeToPDF(!applyThemeToPDF)}
+        />
+      )}
       <MenuItem
         label={_('Invert Image In Dark Mode')}
         disabled={!isDarkMode}
         Icon={invertImgColorInDark ? MdCheck : undefined}
         onClick={() => setInvertImgColorInDark(!invertImgColorInDark)}
       />
+
+      <hr aria-hidden='true' className='border-base-300 my-1' />
+
+      <MenuItem label={_('Share Book')} Icon={IoShareOutline} onClick={handleShare} />
     </Menu>
   );
 };

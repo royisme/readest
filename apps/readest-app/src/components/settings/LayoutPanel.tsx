@@ -61,6 +61,7 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
   const [maxBlockSize, setMaxBlockSize] = useState(viewSettings.maxBlockSize);
   const [writingMode, setWritingMode] = useState(viewSettings.writingMode);
   const [overrideLayout, setOverrideLayout] = useState(viewSettings.overrideLayout);
+  const [useBookLayout, setUseBookLayout] = useState(viewSettings.useBookLayout);
   const [doubleBorder, setDoubleBorder] = useState(viewSettings.doubleBorder);
   const [borderColor, setBorderColor] = useState(viewSettings.borderColor);
   const [showHeader, setShowHeader] = useState(viewSettings.showHeader);
@@ -70,6 +71,14 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
   const [showRemainingTime, setShowRemainingTime] = useState(viewSettings.showRemainingTime);
   const [showRemainingPages, setShowRemainingPages] = useState(viewSettings.showRemainingPages);
   const [showProgressInfo, setShowProgressInfo] = useState(viewSettings.showProgressInfo);
+  const [showCurrentTime, setShowCurrentTime] = useState(viewSettings.showCurrentTime);
+  const [use24HourClock, setUse24HourClock] = useState(viewSettings.use24HourClock);
+  const [showCurrentBatteryStatus, setShowCurrentBatteryStatus] = useState(
+    viewSettings.showCurrentBatteryStatus,
+  );
+  const [showBatteryPercentage, setShowBatteryPercentage] = useState(
+    viewSettings.showBatteryPercentage,
+  );
   const [tapToToggleFooter, setTapToToggleFooter] = useState(viewSettings.tapToToggleFooter);
   const [progressStyle, setProgressStyle] = useState(viewSettings.progressStyle);
   const [screenOrientation, setScreenOrientation] = useState(viewSettings.screenOrientation);
@@ -98,6 +107,7 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
       maxInlineSize: setMaxInlineSize,
       maxBlockSize: setMaxBlockSize,
       overrideLayout: setOverrideLayout,
+      useBookLayout: setUseBookLayout,
       doubleBorder: setDoubleBorder,
       borderColor: setBorderColor,
       showHeader: setShowHeader,
@@ -106,6 +116,10 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
       showRemainingTime: setShowRemainingTime,
       showRemainingPages: setShowRemainingPages,
       showProgressInfo: setShowProgressInfo,
+      showCurrentTime: setShowCurrentTime,
+      use24HourClock: setUse24HourClock,
+      showCurrentBatteryStatus: setShowCurrentBatteryStatus,
+      showBatteryPercentage: setShowBatteryPercentage,
       tapToToggleFooter: setTapToToggleFooter,
       showMarginsOnScroll: setShowMarginsOnScroll,
     });
@@ -304,6 +318,12 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
   }, [overrideLayout]);
 
   useEffect(() => {
+    if (useBookLayout === viewSettings.useBookLayout) return;
+    saveViewSettings(envConfig, bookKey, 'useBookLayout', useBookLayout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useBookLayout]);
+
+  useEffect(() => {
     if (doubleBorder === viewSettings.doubleBorder) return;
     saveViewSettings(envConfig, bookKey, 'doubleBorder', doubleBorder, false, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -338,6 +358,40 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
     saveViewSettings(envConfig, bookKey, 'showProgressInfo', showProgressInfo, false, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showProgressInfo]);
+
+  useEffect(() => {
+    saveViewSettings(envConfig, bookKey, 'showCurrentTime', showCurrentTime, false, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showCurrentTime]);
+
+  useEffect(() => {
+    saveViewSettings(envConfig, bookKey, 'use24HourClock', use24HourClock, false, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [use24HourClock]);
+
+  useEffect(() => {
+    saveViewSettings(
+      envConfig,
+      bookKey,
+      'showCurrentBatteryStatus',
+      showCurrentBatteryStatus,
+      false,
+      false,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showCurrentBatteryStatus]);
+
+  useEffect(() => {
+    saveViewSettings(
+      envConfig,
+      bookKey,
+      'showBatteryPercentage',
+      showBatteryPercentage,
+      false,
+      false,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showBatteryPercentage]);
 
   useEffect(() => {
     saveViewSettings(envConfig, bookKey, 'progressStyle', progressStyle, false, false);
@@ -481,10 +535,20 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
         <h2 className='mb-2 font-medium'>{_('Paragraph')}</h2>
         <div className='card bg-base-100 border-base-200 border shadow'>
           <div className='divide-base-200 divide-y'>
+            <div className='config-item' data-setting-id='settings.layout.useBookLayout'>
+              <span className=''>{_('Use Book Layout')}</span>
+              <input
+                type='checkbox'
+                className='toggle'
+                checked={useBookLayout}
+                onChange={() => setUseBookLayout(!useBookLayout)}
+              />
+            </div>
             <NumberInput
               label={_('Paragraph Margin')}
               value={paragraphMargin}
               onChange={setParagraphMargin}
+              disabled={useBookLayout}
               min={0}
               max={4}
               step={0.1}
@@ -494,6 +558,7 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
               label={_('Line Spacing')}
               value={lineHeight}
               onChange={setLineHeight}
+              disabled={useBookLayout}
               min={1.0}
               max={3.0}
               step={0.1}
@@ -504,6 +569,7 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
                 label={_('Word Spacing')}
                 value={wordSpacing}
                 onChange={setWordSpacing}
+                disabled={useBookLayout}
                 min={-4}
                 max={8}
                 step={0.5}
@@ -514,6 +580,7 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
               label={_('Letter Spacing')}
               value={letterSpacing}
               onChange={setLetterSpacing}
+              disabled={useBookLayout}
               min={-2}
               max={4}
               step={0.5}
@@ -523,6 +590,7 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
               label={_('Text Indent')}
               value={textIndent}
               onChange={setTextIndent}
+              disabled={useBookLayout}
               min={-2}
               max={4}
               step={1}
@@ -534,6 +602,7 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
                 type='checkbox'
                 className='toggle'
                 checked={fullJustification}
+                disabled={useBookLayout}
                 onChange={() => setFullJustification(!fullJustification)}
               />
             </div>
@@ -543,6 +612,7 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
                 type='checkbox'
                 className='toggle'
                 checked={hyphenation}
+                disabled={useBookLayout}
                 onChange={() => setHyphenation(!hyphenation)}
               />
             </div>
@@ -719,6 +789,48 @@ const LayoutPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRese
                   { value: 'percentage', label: _('Percentage') },
                 ]}
                 disabled={!showProgressInfo}
+              />
+            </div>
+            <div className='config-item'>
+              <span className=''>{_('Show Current Time')}</span>
+              <input
+                type='checkbox'
+                className='toggle'
+                checked={showCurrentTime}
+                disabled={!showFooter}
+                onChange={() => setShowCurrentTime(!showCurrentTime)}
+              />
+            </div>
+            {showCurrentTime && (
+              <div className='config-item'>
+                <span className=''>{_('Use 24 Hour Clock')}</span>
+                <input
+                  type='checkbox'
+                  className='toggle'
+                  checked={use24HourClock}
+                  disabled={!showFooter}
+                  onChange={() => setUse24HourClock(!use24HourClock)}
+                />
+              </div>
+            )}
+            <div className='config-item'>
+              <span className=''>{_('Show Current Battery Status')}</span>
+              <input
+                type='checkbox'
+                className='toggle'
+                checked={showCurrentBatteryStatus}
+                disabled={!showFooter}
+                onChange={() => setShowCurrentBatteryStatus(!showCurrentBatteryStatus)}
+              />
+            </div>
+            <div className='config-item'>
+              <span className=''>{_('Show Battery Percentage')}</span>
+              <input
+                type='checkbox'
+                className='toggle'
+                checked={showBatteryPercentage}
+                disabled={!showFooter || !showCurrentBatteryStatus}
+                onChange={() => setShowBatteryPercentage(!showBatteryPercentage)}
               />
             </div>
             <div className='config-item'>

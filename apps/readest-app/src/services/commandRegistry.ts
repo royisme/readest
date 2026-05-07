@@ -3,8 +3,8 @@ import { SettingsPanelType } from '@/components/settings/SettingsDialog';
 import { RiFontSize, RiDashboardLine, RiTranslate } from 'react-icons/ri';
 import { VscSymbolColor } from 'react-icons/vsc';
 import { LiaHandPointerSolid } from 'react-icons/lia';
-import { IoAccessibilityOutline, IoEarOutline } from 'react-icons/io5';
-import { PiRobot, PiSun, PiMoon } from 'react-icons/pi';
+import { IoAccessibilityOutline } from 'react-icons/io5';
+import { PiRobot, PiSpeakerHigh, PiSun, PiMoon } from 'react-icons/pi';
 import { TbSunMoon } from 'react-icons/tb';
 import { MdRefresh } from 'react-icons/md';
 import { IconType } from 'react-icons';
@@ -151,8 +151,8 @@ const panelIcons: Record<SettingsPanelType, IconType> = {
   Layout: RiDashboardLine,
   Color: VscSymbolColor,
   Control: LiaHandPointerSolid,
+  TTS: PiSpeakerHigh,
   Language: RiTranslate,
-  TTS: IoEarOutline,
   AI: PiRobot,
   Custom: IoAccessibilityOutline,
 };
@@ -234,6 +234,12 @@ const layoutPanelItems = [
     labelKey: _('Border Frame'),
     keywords: ['border', 'frame', 'vertical', 'mode'],
     section: 'Layout',
+  },
+  {
+    id: 'settings.layout.useBookLayout',
+    labelKey: _('Use Book Layout'),
+    keywords: ['paragraph', 'book', 'layout', 'default', 'original', 'preserve'],
+    section: 'Paragraph',
   },
   {
     id: 'settings.layout.paragraphMargin',
@@ -366,10 +372,16 @@ const colorPanelItems = [
     section: 'Highlight',
   },
   {
-    id: 'settings.color.ttsHighlightStyle',
+    id: 'settings.tts.ttsHighlightStyle',
     labelKey: _('TTS Highlighting'),
     keywords: ['tts', 'highlight', 'style', 'speech', 'read', 'aloud'],
     section: 'Highlight',
+  },
+  {
+    id: 'settings.tts.mediaMetadata',
+    labelKey: _('TTS Media Info Update Frequency'),
+    keywords: ['tts', 'media', 'metadata', 'bluetooth', 'notification', 'chapter', 'paragraph'],
+    section: 'TTS',
   },
   {
     id: 'settings.color.readingRuler',
@@ -394,9 +406,9 @@ const controlPanelItems = [
     section: 'Scroll',
   },
   {
-    id: 'settings.control.continuousScroll',
-    labelKey: _('Continuous Scroll'),
-    keywords: ['continuous', 'scroll', 'endless', 'infinite'],
+    id: 'settings.control.scroll.noContinuousScroll',
+    labelKey: _('Single Section Scroll'),
+    keywords: ['single', 'section', 'scroll', 'continuous', 'one', 'chapter'],
     section: 'Scroll',
   },
   {
@@ -469,6 +481,12 @@ const controlPanelItems = [
     id: 'settings.control.colorEinkMode',
     labelKey: _('Color E-Ink Mode'),
     keywords: ['color', 'eink', 'e-ink', 'kaleido'],
+    section: 'Device',
+  },
+  {
+    id: 'settings.control.screenWakeLock',
+    labelKey: _('Keep Screen Awake'),
+    keywords: ['screen', 'wake', 'lock', 'awake', 'sleep', 'display'],
     section: 'Device',
   },
   {

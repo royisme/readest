@@ -8,6 +8,10 @@ vi.mock('@/services/environment', async () => {
 
   const mockAppService = {
     init: vi.fn().mockResolvedValue(undefined),
+    // EnvProvider's mount effect calls appService.loadSettings() to seed
+    // replica sync. Returning a settings object without replicaDeviceId
+    // makes init early-exit cleanly (no warn, no real network).
+    loadSettings: vi.fn().mockResolvedValue({}),
     // Add any other methods from AppService interface
   };
 
@@ -41,6 +45,7 @@ describe('ProofreadPopup Component', () => {
       key: 'test-book',
       text: 'test word',
       cfi: 'epubcfi(/6/2[chapter1]!/4/1:0)',
+      index: 0,
       range: {
         deleteContents: vi.fn(),
         insertNode: vi.fn(),
@@ -49,7 +54,7 @@ describe('ProofreadPopup Component', () => {
         startOffset: 5,
         endOffset: 9,
       } as unknown as Range,
-      index: 0,
+      page: 1,
     },
     position: { point: { x: 100, y: 100 } },
     trianglePosition: { point: { x: 100, y: 100 } },
@@ -230,6 +235,25 @@ describe('ProofreadPopup Component', () => {
       fireEvent.mouseDown(input);
 
       expect(mockOnClose).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Manage Replacement Rules Shortcut', () => {
+    it('should not render manage button when onManage is not provided', () => {
+      renderWithProviders(<ProofreadPopup {...defaultProps} />);
+
+      expect(screen.queryByLabelText('Proofread Replacement Rules')).toBeNull();
+    });
+
+    it('should render manage button and invoke onManage when provided', () => {
+      const mockOnManage = vi.fn();
+      renderWithProviders(<ProofreadPopup {...defaultProps} onManage={mockOnManage} />);
+
+      const button = screen.getByLabelText('Proofread Replacement Rules');
+      expect(button).toBeTruthy();
+
+      fireEvent.click(button);
+      expect(mockOnManage).toHaveBeenCalledTimes(1);
     });
   });
 });

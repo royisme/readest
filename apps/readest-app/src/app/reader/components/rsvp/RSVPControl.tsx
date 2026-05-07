@@ -4,12 +4,21 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useReaderStore } from '@/store/readerStore';
 import { useBookDataStore } from '@/store/bookDataStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useThemeStore } from '@/store/themeStore';
-import { RSVPController, RsvpStartChoice, RsvpStopPosition } from '@/services/rsvp';
+import {
+  RSVPController,
+  RsvpStartChoice,
+  RsvpStopPosition,
+  buildRsvpExitConfigUpdate,
+} from '@/services/rsvp';
 import { eventDispatcher } from '@/utils/event';
+import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
-import { BookNote } from '@/types/book';
+import { BookNote, PageInfo } from '@/types/book';
+import { TOCItem } from '@/libs/document';
 import { Insets } from '@/types/misc';
+import { initJieba } from '@/utils/jieba';
 import RSVPOverlay from './RSVPOverlay';
 import RSVPStartDialog from './RSVPStartDialog';
 
@@ -103,13 +112,10 @@ const expandRangeToSentence = (range: Range, doc: Document): Range => {
 
 const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
   const _ = useTranslation();
-  const {
-    getView,
-    getProgress,
-    getViewSettings: _getViewSettings,
-    setProgress: _setProgress,
-  } = useReaderStore();
-  const { getBookData } = useBookDataStore();
+  const { envConfig } = useEnv();
+  const { settings } = useSettingsStore();
+  const { getView, getProgress } = useReaderStore();
+  const { getBookData, getConfig, setConfig, saveConfig } = useBookDataStore();
   const { themeCode } = useThemeStore();
 
   const [isActive, setIsActive] = useState(false);
@@ -117,6 +123,10 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
   const [startChoice, setStartChoice] = useState<RsvpStartChoice | null>(null);
   const controllerRef = useRef<RSVPController | null>(null);
   const tempHighlightRef = useRef<BookNote | null>(null);
+  // renderer.primaryIndex reverts after navigation (paginator #detectPrimaryView),
+  // so track RSVP's actual section and chapter href in stable refs instead.
+  const rsvpSectionRef = useRef<number>(-1);
+  const rsvpChapterHrefRef = useRef<string | null>(null);
 
   // Helper to remove any existing RSVP highlight
   const removeRsvpHighlight = useCallback(() => {
@@ -142,6 +152,8 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
       }
       // Remove any existing RSVP highlight when component unmounts
       removeRsvpHighlight();
+      rsvpSectionRef.current = -1;
+      rsvpChapterHrefRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -196,12 +208,36 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
         return;
       }
 
+      const primaryLanguage = bookData.book.primaryLanguage;
+
       // Create controller if not exists
       if (!controllerRef.current) {
-        controllerRef.current = new RSVPController(view, bookKey);
+        controllerRef.current = new RSVPController(view, bookKey, primaryLanguage);
+        rsvpSectionRef.current = view.renderer.primaryIndex;
+        rsvpChapterHrefRef.current = progress?.sectionHref ?? null;
+      } else {
+        controllerRef.current.setPrimaryLanguage(primaryLanguage);
       }
 
       const controller = controllerRef.current;
+
+      // For Chinese books, preload jieba-wasm so that the synchronous word
+      // extractor can use it. Done before requestStart() so the loader has
+      // the dialog's interaction time to fetch ~3.8MB of WASM.
+      if (primaryLanguage?.toLowerCase().startsWith('zh')) {
+        initJieba().catch((e) => {
+          console.warn('Failed to initialize jieba-wasm; falling back to Intl.Segmenter:', e);
+        });
+      }
+
+      // Seed localStorage from cloud-synced BookConfig so a fresh cross-device
+      // rsvpPosition can override a stale local entry. seedPosition guards against
+      // a corrupt synced pair (rsvpPosition.cfi in a different chapter than location).
+      const config = getConfig(bookKey);
+      const configPos = config?.rsvpPosition;
+      if (configPos) {
+        controller.seedPosition(configPos, config?.location ?? progress?.location ?? null);
+      }
 
       // Set current CFI for position tracking
       if (progress?.location) {
@@ -231,7 +267,7 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
         controller.removeEventListener('rsvp-start-choice', handleStartChoice);
       }, 100);
     },
-    [_, bookKey, getBookData, getProgress, getView, removeRsvpHighlight],
+    [_, bookKey, getBookData, getConfig, getProgress, getView, removeRsvpHighlight],
   );
 
   const handleStartDialogSelect = useCallback(
@@ -250,18 +286,16 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
           // Navigate to the saved position's section
           view.goTo(cfi);
 
-          // Wait for navigation, then reload and start RSVP
+          // Wait for navigation, then start RSVP — start() handles word extraction
+          // and position recovery from storage directly, so loadNextPageContent()
+          // must not be called here (it would clear the saved position first)
           setTimeout(() => {
             const progress = getProgress(bookKey);
             if (progress?.location) {
               controller.setCurrentCfi(progress.location);
             }
-            controller.loadNextPageContent();
-            // Small delay to ensure content is loaded
-            setTimeout(() => {
-              controller.start();
-              setIsActive(true);
-            }, 100);
+            controller.start();
+            setIsActive(true);
           }, 500);
         }
       };
@@ -381,20 +415,44 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
       controller.stop();
     }
 
+    // Persist RSVP position to BookConfig so it syncs to the cloud. Pin
+    // `location` to the RSVP word's CFI so the next normal-mode load resumes
+    // here instead of at a section boundary that a mid-RSVP relocate left
+    // behind in the auto-saved config.
+    const rsvpPosition = controller?.getStoredPosition();
+    if (rsvpPosition) {
+      const config = getConfig(bookKey);
+      if (config) {
+        const update = buildRsvpExitConfigUpdate(rsvpPosition);
+        setConfig(bookKey, update);
+        saveConfig(envConfig, bookKey, { ...config, ...update }, settings);
+      }
+    }
+
     setIsActive(false);
     setShowStartDialog(false);
-  }, [bookKey, getView, removeRsvpHighlight, themeCode.primary]);
+  }, [
+    bookKey,
+    envConfig,
+    getConfig,
+    getView,
+    removeRsvpHighlight,
+    saveConfig,
+    setConfig,
+    settings,
+    themeCode.primary,
+  ]);
 
   const handleChapterSelect = useCallback(
     (href: string) => {
       const view = getView(bookKey);
       if (!view) return;
 
-      // Navigate to chapter
-      view.goTo(href);
-
-      // Wait for navigation, then reload RSVP content
-      setTimeout(() => {
+      const onRelocate = (e: Event) => {
+        view.removeEventListener('relocate', onRelocate);
+        const detail = (e as CustomEvent).detail as { section?: PageInfo; tocItem?: TOCItem };
+        rsvpSectionRef.current = detail.section?.current ?? view.renderer.primaryIndex;
+        rsvpChapterHrefRef.current = detail.tocItem?.href ?? null;
         const controller = controllerRef.current;
         if (controller) {
           const progress = getProgress(bookKey);
@@ -403,7 +461,9 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
           }
           controller.loadNextPageContent();
         }
-      }, 500);
+      };
+      view.addEventListener('relocate', onRelocate);
+      view.goTo(href);
     },
     [bookKey, getProgress, getView],
   );
@@ -412,32 +472,54 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
     const view = getView(bookKey);
     if (!view) return;
 
-    // Remove RSVP highlight when moving to next page
     removeRsvpHighlight();
 
-    // RSVP extracts ALL words from the current section via renderer.getContents().
-    // When RSVP runs out of words and calls this function, it means the entire
-    // chapter/section has been read, so we need to go to the next section.
-    await view.renderer.nextSection?.();
+    if (view.renderer.atEnd) {
+      controllerRef.current?.pause();
+      return;
+    }
 
-    // Wait for section change, then load new content
-    setTimeout(() => {
+    const indexBefore =
+      rsvpSectionRef.current >= 0 ? rsvpSectionRef.current : view.renderer.primaryIndex;
+
+    let cleanup: ReturnType<typeof setTimeout> | null = null;
+
+    const onRelocate = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { section?: PageInfo; tocItem?: TOCItem };
+      const newIndex = detail.section?.current ?? view.renderer.primaryIndex;
+
+      if (newIndex === indexBefore) return; // revert relocate — keep waiting
+
+      view.removeEventListener('relocate', onRelocate);
+      if (cleanup) clearTimeout(cleanup);
+
       const controller = controllerRef.current;
-      if (controller) {
-        const progress = getProgress(bookKey);
-        if (progress?.location) {
-          controller.setCurrentCfi(progress.location);
-        }
-        controller.loadNextPageContent();
+      if (!controller) return;
+
+      rsvpSectionRef.current = newIndex;
+      rsvpChapterHrefRef.current = detail.tocItem?.href ?? null;
+
+      const progress = getProgress(bookKey);
+      if (progress?.location) {
+        controller.setCurrentCfi(progress.location);
       }
-    }, 500);
+      controller.loadNextPageContent();
+    };
+
+    view.addEventListener('relocate', onRelocate);
+    cleanup = setTimeout(() => view.removeEventListener('relocate', onRelocate), 5000);
+    // Navigate directly to rsvpSectionRef.current + 1 rather than calling nextSection(),
+    // which uses renderer.primaryIndex internally. primaryIndex reverts to the previous
+    // section after navigation (#detectPrimaryView), so nextSection() would re-navigate
+    // to the already-current section and the onRelocate filter would discard the event.
+    await view.renderer.goTo({ index: rsvpSectionRef.current + 1 });
   }, [bookKey, getProgress, getView, removeRsvpHighlight]);
 
   // Get current chapter info
   const progress = getProgress(bookKey);
   const bookData = getBookData(bookKey);
   const chapters = bookData?.bookDoc?.toc || [];
-  const currentChapterHref = progress?.sectionHref || null;
+  const currentChapterHref = rsvpChapterHrefRef.current ?? progress?.sectionHref ?? null;
 
   // Use portal to render overlay at body level to avoid stacking context issues
   const portalContainer = typeof document !== 'undefined' ? document.body : null;

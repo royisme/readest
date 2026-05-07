@@ -9,6 +9,7 @@ import { MdCloudSync, MdSync, MdSyncProblem } from 'react-icons/md';
 import { invoke, PermissionState } from '@tauri-apps/api/core';
 import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
 import { DOWNLOAD_READEST_URL } from '@/services/constants';
+import { setBackupDialogVisible } from '@/app/library/components/BackupWindow';
 import { useAuth } from '@/context/AuthContext';
 import { useEnv } from '@/context/EnvContext';
 import { useThemeStore } from '@/store/themeStore';
@@ -26,7 +27,7 @@ import { setMigrateDataDirDialogVisible } from '@/app/library/components/Migrate
 import { requestStoragePermission } from '@/utils/permission';
 import { saveSysSettings } from '@/helpers/settings';
 import { selectDirectory } from '@/utils/bridge';
-import { formatLocaleDateTime } from '@/utils/book';
+import dayjs from 'dayjs';
 import UserAvatar from '@/components/UserAvatar';
 import MenuItem from '@/components/MenuItem';
 import Quota from '@/components/Quota';
@@ -54,7 +55,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
   const [isAutoCheckUpdates, setIsAutoCheckUpdates] = useState(settings.autoCheckUpdates);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(settings.alwaysOnTop);
   const [isAlwaysShowStatusBar, setIsAlwaysShowStatusBar] = useState(settings.alwaysShowStatusBar);
-  const [isScreenWakeLock, setIsScreenWakeLock] = useState(settings.screenWakeLock);
   const [isOpenLastBooks, setIsOpenLastBooks] = useState(settings.openLastBooks);
   const [isAutoImportBooksOnOpen, setIsAutoImportBooksOnOpen] = useState(
     settings.autoImportBooksOnOpen,
@@ -66,7 +66,9 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
   );
   const iconSize = useResponsiveSize(16);
 
-  const { isSyncing } = useLibraryStore();
+  const [isRefreshingMetadata, setIsRefreshingMetadata] = useState(false);
+  const [refreshMetadataProgress, setRefreshMetadataProgress] = useState('');
+  const { isSyncing, setLibrary } = useLibraryStore();
   const { stats, hasActiveTransfers, setIsTransferQueueOpen } = useTransferQueue();
 
   const openTransferQueue = () => {
@@ -97,11 +99,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
   const cycleThemeMode = () => {
     const nextMode = themeMode === 'auto' ? 'light' : themeMode === 'light' ? 'dark' : 'auto';
     setThemeMode(nextMode);
-  };
-
-  const handleReloadPage = () => {
-    window.location.reload();
-    setIsDropdownOpen?.(false);
   };
 
   const handleFullScreen = () => {
@@ -150,12 +147,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
     setIsAutoCheckUpdates(newValue);
   };
 
-  const toggleScreenWakeLock = () => {
-    const newValue = !settings.screenWakeLock;
-    saveSysSettings(envConfig, 'screenWakeLock', newValue);
-    setIsScreenWakeLock(newValue);
-  };
-
   const toggleOpenLastBooks = () => {
     const newValue = !settings.openLastBooks;
     saveSysSettings(envConfig, 'openLastBooks', newValue);
@@ -181,6 +172,47 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
   const handleSetRootDir = () => {
     setMigrateDataDirDialogVisible(true);
     setIsDropdownOpen?.(false);
+  };
+
+  const handleBackupRestore = () => {
+    setIsDropdownOpen?.(false);
+    setBackupDialogVisible(true);
+  };
+
+  const handleRefreshMetadata = async () => {
+    if (!appService || isRefreshingMetadata) return;
+    setIsRefreshingMetadata(true);
+    setRefreshMetadataProgress(_('Loading library...'));
+    try {
+      const books = await appService.loadLibraryBooks();
+      const activeBooks = books.filter((b) => !b.deletedAt);
+      let refreshed = 0;
+      for (let i = 0; i < activeBooks.length; i++) {
+        setRefreshMetadataProgress(`${i + 1} / ${activeBooks.length}`);
+        try {
+          if (await appService.refreshBookMetadata(activeBooks[i]!)) {
+            refreshed++;
+          }
+        } catch {
+          // Skip books whose files can't be opened
+        }
+      }
+      setLibrary(books);
+      await appService.saveLibraryBooks(books);
+      setRefreshMetadataProgress(_('{{count}} books refreshed', { count: refreshed }));
+      onPullLibrary(true);
+      setTimeout(() => {
+        setIsRefreshingMetadata(false);
+        setRefreshMetadataProgress('');
+      }, 2000);
+    } catch (error) {
+      console.error('Failed to refresh metadata:', error);
+      setRefreshMetadataProgress(_('Failed to refresh metadata'));
+      setTimeout(() => {
+        setIsRefreshingMetadata(false);
+        setRefreshMetadataProgress('');
+      }, 2000);
+    }
   };
 
   const openSettingsDialog = () => {
@@ -217,6 +249,11 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
 
     saveSysSettings(envConfig, 'alwaysInForeground', requestAlwaysInForeground);
     setAlwaysInForeground(requestAlwaysInForeground);
+  };
+
+  const handleSyncLibrary = () => {
+    onPullLibrary(true, true);
+    setIsDropdownOpen?.(false);
   };
 
   const avatarUrl = user?.user_metadata?.['picture'] || user?.user_metadata?.['avatar_url'];
@@ -277,15 +314,15 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
             <MenuItem
               label={
                 settings.lastSyncedAtBooks
-                  ? _('Synced at {{time}}', {
-                      time: formatLocaleDateTime(settings.lastSyncedAtBooks),
+                  ? _('Synced {{time}}', {
+                      time: dayjs(settings.lastSyncedAtBooks).fromNow(),
                     })
                   : _('Never synced')
               }
               Icon={user ? MdSync : MdSyncProblem}
               labelClass='ps-2 pe-1 !mx-0'
               iconClassName={user && isSyncing ? 'animate-reverse-spin' : ''}
-              onClick={onPullLibrary.bind(null, true, true)}
+              onClick={handleSyncLibrary}
             />
             <button
               onClick={handleUserProfile}
@@ -349,11 +386,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
           onClick={toggleAlwaysShowStatusBar}
         />
       )}
-      <MenuItem
-        label={_('Keep Screen Awake')}
-        toggled={isScreenWakeLock}
-        onClick={toggleScreenWakeLock}
-      />
       {appService?.isAndroidApp && (
         <MenuItem
           label={_(_('Background Read Aloud'))}
@@ -361,41 +393,36 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
           onClick={toggleAlwaysInForeground}
         />
       )}
-      <MenuItem label={_('Reload Page')} onClick={handleReloadPage} />
       <MenuItem
         label={themeModeLabel}
         Icon={themeMode === 'dark' ? PiMoon : themeMode === 'light' ? PiSun : TbSunMoon}
         onClick={cycleThemeMode}
       />
       <MenuItem label={_('Settings')} Icon={PiGear} onClick={openSettingsDialog} />
-      {appService?.canCustomizeRootDir && (
-        <>
-          <hr aria-hidden='true' className='border-base-200 my-1' />
-          <MenuItem label={_('Advanced Settings')}>
-            <ul
-              className='ms-0 flex flex-col before:hidden'
-              style={{
-                paddingInlineStart: `${iconSize}px`,
-              }}
-            >
-              <MenuItem
-                label={_('Change Data Location')}
-                noIcon={!appService?.isAndroidApp}
-                onClick={handleSetRootDir}
-              />
-              {appService?.isAndroidApp && appService?.distChannel !== 'playstore' && (
-                <MenuItem
-                  label={_('Save Book Cover')}
-                  tooltip={_('Auto-save last book cover')}
-                  description={savedBookCoverForLockScreen ? savedBookCoverDescription : ''}
-                  toggled={!!savedBookCoverForLockScreen}
-                  onClick={handleSetSavedBookCoverForLockScreen}
-                />
-              )}
-            </ul>
-          </MenuItem>
-        </>
-      )}
+      <hr aria-hidden='true' className='border-base-200 my-1' />
+      <MenuItem label={_('Advanced Settings')}>
+        <ul className='ms-0 flex flex-col ps-0 before:hidden'>
+          {appService?.canCustomizeRootDir && (
+            <MenuItem label={_('Change Data Location')} onClick={handleSetRootDir} />
+          )}
+          <MenuItem label={_('Backup & Restore')} onClick={handleBackupRestore} />
+          <MenuItem
+            label={_('Refresh Metadata')}
+            description={refreshMetadataProgress}
+            onClick={handleRefreshMetadata}
+            disabled={isRefreshingMetadata}
+          />
+          {appService?.isAndroidApp && appService?.distChannel !== 'playstore' && (
+            <MenuItem
+              label={_('Save Book Cover')}
+              tooltip={_('Auto-save last book cover')}
+              description={savedBookCoverForLockScreen ? savedBookCoverDescription : ''}
+              toggled={!!savedBookCoverForLockScreen}
+              onClick={handleSetSavedBookCoverForLockScreen}
+            />
+          )}
+        </ul>
+      </MenuItem>
       <hr aria-hidden='true' className='border-base-200 my-1' />
       {user && userProfilePlan === 'free' && (
         <MenuItem label={_('Upgrade to Inkline Premium')} onClick={handleUpgrade} />

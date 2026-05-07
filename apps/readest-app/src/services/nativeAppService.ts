@@ -42,9 +42,12 @@ import { copyURIToPath, getStorefrontRegionCode } from '@/utils/bridge';
 import { copyFiles } from '@/utils/files';
 
 import { BaseAppService } from './appService';
+import { DatabaseOpts, DatabaseService } from '@/types/database';
+import { SchemaType } from '@/services/database/migrate';
 import {
   DATA_SUBDIR,
   LOCAL_BOOKS_SUBDIR,
+  LOCAL_DICTIONARIES_SUBDIR,
   LOCAL_FONTS_SUBDIR,
   LOCAL_IMAGES_SUBDIR,
   SETTINGS_FILENAME,
@@ -90,7 +93,7 @@ const getPathResolver = ({
   const getCustomBasePrefixSync = isCustomBaseDir
     ? (baseDir: BaseDir) => {
         return () => {
-          const dataDirs = ['Settings', 'Data', 'Books', 'Fonts', 'Images'];
+          const dataDirs = ['Settings', 'Data', 'Books', 'Fonts', 'Images', 'Dictionaries'];
           const leafDir = dataDirs.includes(baseDir) ? '' : baseDir;
           return leafDir ? `${customRootDir}/${leafDir}` : customRootDir!;
         };
@@ -160,6 +163,15 @@ const getPathResolver = ({
           fp: customBasePrefixSync
             ? `${customBasePrefixSync()}/${LOCAL_IMAGES_SUBDIR}${path ? `/${path}` : ''}`
             : `${LOCAL_IMAGES_SUBDIR}${path ? `/${path}` : ''}`,
+          base,
+        };
+      case 'Dictionaries':
+        return {
+          baseDir: customBaseDir ?? BaseDirectory.AppData,
+          basePrefix: customBasePrefix || appDataDir,
+          fp: customBasePrefixSync
+            ? `${customBasePrefixSync()}/${LOCAL_DICTIONARIES_SUBDIR}${path ? `/${path}` : ''}`
+            : `${LOCAL_DICTIONARIES_SUBDIR}${path ? `/${path}` : ''}`,
           base,
         };
       case 'None':
@@ -237,22 +249,26 @@ export const nativeFileSystem: FileSystem = {
         // NOTE: RemoteFile currently performs about 2× faster than NativeFile
         // due to an unresolved performance issue in Tauri (see tauri-apps/tauri#9190).
         // Once the bug is resolved, we should switch back to using NativeFile.
-        const prefix = await this.getPrefix(base);
-        const absolutePath = prefix ? await join(prefix, path) : path;
-        return await new RemoteFile(this.getURL(absolutePath), fname).open();
+        try {
+          const prefix = await this.getPrefix(base);
+          const absolutePath = prefix ? await join(prefix, path) : path;
+          return await new RemoteFile(this.getURL(absolutePath), fname).open();
+        } catch {
+          return await new NativeFile(fp, fname, baseDir ? baseDir : null).open();
+        }
       }
     }
   },
-  async copyFile(srcPath: string, dstPath: string, base: BaseDir) {
+  async copyFile(srcPath: string, srcBase: BaseDir, dstPath: string, dstBase: BaseDir) {
     try {
-      if (!(await this.exists(getDirPath(dstPath), base))) {
-        await this.createDir(getDirPath(dstPath), base, true);
+      if (!(await this.exists(getDirPath(dstPath), dstBase))) {
+        await this.createDir(getDirPath(dstPath), dstBase, true);
       }
     } catch (error) {
       console.log('Failed to create directory for copying file:', error);
     }
     if (isContentURI(srcPath)) {
-      const prefix = await this.getPrefix(base);
+      const prefix = await this.getPrefix(dstBase);
       if (!prefix) {
         throw new Error('Invalid base directory');
       }
@@ -265,8 +281,12 @@ export const nativeFileSystem: FileSystem = {
         throw new Error('Failed to copy file');
       }
     } else {
-      const { fp, baseDir } = this.resolvePath(dstPath, base);
-      await copyFile(srcPath, fp, baseDir ? { toPathBaseDir: baseDir } : undefined);
+      const { fp: srcFp, baseDir: srcBaseDir } = this.resolvePath(srcPath, srcBase);
+      const { fp: dstFp, baseDir: dstBaseDir } = this.resolvePath(dstPath, dstBase);
+      const opts: { fromPathBaseDir?: number; toPathBaseDir?: number } = {};
+      if (srcBaseDir) opts.fromPathBaseDir = srcBaseDir;
+      if (dstBaseDir) opts.toPathBaseDir = dstBaseDir;
+      await copyFile(srcFp, dstFp, Object.keys(opts).length > 0 ? opts : undefined);
     }
   },
   async readFile(path: string, base: BaseDir, mode: 'text' | 'binary') {
@@ -432,11 +452,21 @@ export class NativeAppService extends BaseAppService {
   // See: https://github.com/tauri-apps/tauri/issues/3716
   override canCustomizeRootDir = DIST_CHANNEL !== 'appstore';
   override canReadExternalDir = DIST_CHANNEL !== 'appstore' && DIST_CHANNEL !== 'playstore';
+  override supportsCanvasContext2DFilter =
+    OS_TYPE !== 'ios' && OS_TYPE !== 'macos' && OS_TYPE !== 'linux';
   override distChannel = DIST_CHANNEL;
   override storefrontRegionCode: string | null = null;
   override isOnlineCatalogsAccessible = true;
 
   private execDir?: string = undefined;
+  private customRootDir?: string = undefined;
+
+  constructor(customRootDir?: string) {
+    super();
+    if (customRootDir) {
+      this.customRootDir = customRootDir;
+    }
+  }
 
   override async init() {
     const execDir = await invoke<string>('get_executable_dir');
@@ -453,9 +483,9 @@ export class NativeAppService extends BaseAppService {
       });
     }
     const settings = await this.loadSettings();
-    if (settings.customRootDir) {
+    if (this.customRootDir || settings.customRootDir) {
       this.fs.resolvePath = getPathResolver({
-        customRootDir: settings.customRootDir,
+        customRootDir: this.customRootDir || settings.customRootDir,
         isPortable: this.isPortableApp,
         execDir,
       });
@@ -531,14 +561,13 @@ export class NativeAppService extends BaseAppService {
   async saveFile(
     filename: string,
     content: string | ArrayBuffer,
-    filepath: string,
-    mimeType?: string,
+    options?: { filePath?: string; mimeType?: string },
   ): Promise<boolean> {
     try {
       const ext = filename.split('.').pop() || '';
-      if (this.isIOSApp) {
-        await shareFile(filepath, {
-          mimeType: mimeType || 'application/octet-stream',
+      if (this.isIOSApp && options?.filePath) {
+        await shareFile(options.filePath, {
+          mimeType: options?.mimeType || 'application/octet-stream',
         });
       } else {
         const filePath = await saveDialog({
@@ -562,6 +591,21 @@ export class NativeAppService extends BaseAppService {
 
   async ask(message: string): Promise<boolean> {
     return await ask(message);
+  }
+
+  async openDatabase(
+    schema: SchemaType,
+    path: string,
+    base: BaseDir,
+    opts?: DatabaseOpts,
+  ): Promise<DatabaseService> {
+    const fullPath = await this.resolveFilePath(path, base);
+    const { NativeDatabaseService } = await import('./database/nativeDatabaseService');
+    const db = await NativeDatabaseService.open(`sqlite:${fullPath}`, opts);
+    const { migrate } = await import('./database/migrate');
+    const { getMigrations } = await import('./database/migrations');
+    await migrate(db, getMigrations(schema));
+    return db;
   }
 
   async migrate20251029() {

@@ -11,7 +11,7 @@ import { CFI } from '@/libs/document';
 import { debounce } from '@/utils/debounce';
 import { eventDispatcher } from '@/utils/event';
 import { DEFAULT_BOOK_SEARCH_CONFIG, SYNC_PROGRESS_INTERVAL_SEC } from '@/services/constants';
-import { getCFIFromXPointer, getXPointerFromCFI, normalizeProgressXPointer } from '@/utils/xcfi';
+import { getCFIFromXPointer, getXPointerFromCFI } from '@/utils/xcfi';
 
 export const useProgressSync = (bookKey: string) => {
   const _ = useTranslation();
@@ -50,16 +50,21 @@ export const useProgressSync = (bookKey: string) => {
     if (!configPulled.current) {
       pullConfig(bookKey);
     } else {
+      // Skip pushes while previewing a deep-link target — the position in
+      // memory reflects the annotation, not what the user is actually reading.
+      if (useReaderStore.getState().getViewState(bookKey)?.previewMode) return;
       const config = getConfig(bookKey);
       const view = getView(bookKey);
       const book = getBookData(bookKey)?.book;
       if (config && view && book && config.progress && config.progress[0] > 0) {
         try {
-          const content = view.renderer.getContents()[0];
+          const contents = view.renderer.getContents();
+          const primaryIndex = view.renderer.primaryIndex;
+          const content = contents.find((x) => x.index === primaryIndex) ?? contents[0];
           if (content && !FIXED_LAYOUT_FORMATS.has(book.format)) {
             const { doc, index } = content;
             const xpointerResult = await getXPointerFromCFI(config.location!, doc, index || 0);
-            config.xpointer = normalizeProgressXPointer(xpointerResult.xpointer);
+            config.xpointer = xpointerResult.xpointer;
           }
         } catch (error) {
           console.warn('Failed to convert CFI to XPointer', error);
@@ -122,14 +127,15 @@ export const useProgressSync = (bookKey: string) => {
     if (syncedConfig) {
       const configCFI = config?.location;
       let remoteCFILocation = syncedConfig.location;
-      const xPointer = syncedConfig.xpointer;
+      const xpointer = syncedConfig.xpointer;
       const bookData = getBookData(bookKey);
       const view = getView(bookKey);
-      if (xPointer && view && bookData && bookData.bookDoc) {
-        const content = view.renderer.getContents()[0];
-        const koProgress = normalizeProgressXPointer(xPointer);
+      if (xpointer && view && bookData && bookData.bookDoc) {
+        const pContents = view.renderer.getContents();
+        const pIdx = view.renderer.primaryIndex;
+        const content = pContents.find((x) => x.index === pIdx) ?? pContents[0];
         const candidateCFI = await getCFIFromXPointer(
-          koProgress,
+          xpointer,
           content?.doc,
           content?.index,
           bookData.bookDoc,
@@ -148,7 +154,12 @@ export const useProgressSync = (bookKey: string) => {
       }
       if (remoteCFILocation && configCFI) {
         if (CFI.compare(configCFI, remoteCFILocation) < 0) {
-          if (view) {
+          // While previewing a deep-link target, do NOT yank the view to the
+          // remote position — the user came here to look at a specific
+          // annotation. The local config still gets updated above; the next
+          // open will resolve to the synced position normally.
+          const isPreview = useReaderStore.getState().getViewState(bookKey)?.previewMode;
+          if (view && !isPreview) {
             view.goTo(remoteCFILocation);
             setHoveredBookKey(null);
             eventDispatcher.dispatch('hint', {

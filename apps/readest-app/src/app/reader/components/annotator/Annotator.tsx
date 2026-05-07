@@ -13,44 +13,65 @@ import { useBookDataStore } from '@/store/bookDataStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useNotebookStore } from '@/store/notebookStore';
+import { useCustomDictionaryStore } from '@/store/customDictionaryStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { useDeviceControlStore } from '@/store/deviceStore';
 import { useFoliateEvents } from '../../hooks/useFoliateEvents';
 import { useNotesSync } from '../../hooks/useNotesSync';
+import { useReadwiseSync } from '../../hooks/useReadwiseSync';
+import { useHardcoverSync } from '../../hooks/useHardcoverSync';
 import { useTextSelector } from '../../hooks/useTextSelector';
-import { Position, TextSelection } from '@/utils/sel';
+import { Point, Position, TextSelection } from '@/utils/sel';
 import { getPopupPosition, getPosition, getTextFromRange } from '@/utils/sel';
 import { eventDispatcher } from '@/utils/event';
-import { findTocItemBS } from '@/utils/toc';
+import { findTocItemBS } from '@/services/nav';
 import { throttle } from '@/utils/throttle';
+import {
+  cancelDeferredAction,
+  createDeferredActionState,
+  flushDeferredAction,
+  runOrDeferAction,
+} from '../../utils/deferredAction';
 import { runSimpleCC } from '@/utils/simplecc';
 import { getWordCount } from '@/utils/word';
-import { isCfiInLocation } from '@/utils/cfi';
+import { getIndexFromCfi, isCfiInLocation } from '@/utils/cfi';
 import { TransformContext } from '@/services/transformers/types';
 import { transformContent } from '@/services/transformService';
 import { getHighlightColorHex } from '../../utils/annotatorUtil';
 import { annotationToolButtons } from './AnnotationTools';
 import AnnotationRangeEditor from './AnnotationRangeEditor';
 import AnnotationPopup from './AnnotationPopup';
-import WiktionaryPopup from './WiktionaryPopup';
-import WikipediaPopup from './WikipediaPopup';
+import DictionaryPopup from './DictionaryPopup';
+import DictionarySheet from './DictionarySheet';
 import TranslatorPopup from './TranslatorPopup';
 import useShortcuts from '@/hooks/useShortcuts';
 import ProofreadPopup from './ProofreadPopup';
+import { setProofreadRulesVisibility } from '@/app/reader/components/ProofreadRules';
 import ExportMarkdownDialog from './ExportMarkdownDialog';
 
 const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
   const _ = useTranslation();
   const { envConfig, appService } = useEnv();
-  const { settings } = useSettingsStore();
+  const { settings, setSettingsDialogBookKey, setSettingsDialogOpen, setActiveSettingsItemId } =
+    useSettingsStore();
   const { isDarkMode } = useThemeStore();
   const { getConfig, saveConfig, getBookData, updateBooknotes } = useBookDataStore();
   const { getProgress, getView, getViewsById, getViewSettings } = useReaderStore();
   const { setNotebookVisible, setNotebookNewAnnotation } = useNotebookStore();
   const { listenToNativeTouchEvents } = useDeviceControlStore();
+  const { loadCustomDictionaries } = useCustomDictionaryStore();
 
   useNotesSync(bookKey);
+  useReadwiseSync(bookKey);
+  useHardcoverSync(bookKey);
+
+  useEffect(() => {
+    void loadCustomDictionaries(envConfig).catch((error) => {
+      console.warn('Failed to load custom dictionaries:', error);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const osPlatform = getOSPlatform();
   const config = getConfig(bookKey)!;
@@ -64,8 +85,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
 
   const [selection, setSelection] = useState<TextSelection | null>(null);
   const [showAnnotPopup, setShowAnnotPopup] = useState(false);
-  const [showWiktionaryPopup, setShowWiktionaryPopup] = useState(false);
-  const [showWikipediaPopup, setShowWikipediaPopup] = useState(false);
+  const [showDictionaryPopup, setShowDictionaryPopup] = useState(false);
   const [showDeepLPopup, setShowDeepLPopup] = useState(false);
   const [showProofreadPopup, setShowProofreadPopup] = useState(false);
   const [trianglePosition, setTrianglePosition] = useState<Position>();
@@ -77,6 +97,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
   const [showAnnotationNotes, setShowAnnotationNotes] = useState(false);
   const [annotationNotes, setAnnotationNotes] = useState<BookNote[]>([]);
   const [editingAnnotation, setEditingAnnotation] = useState<BookNote | null>(null);
+  const [externalDragPoint, setExternalDragPoint] = useState<Point | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportData, setExportData] = useState<{
     booknotes: BookNote[];
@@ -90,20 +111,23 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     settings.globalReadSettings.highlightStyles[selectedStyle],
   );
   const androidTouchEndRef = useRef(false);
+  // Holds a quick action that fired while the user is still touching the screen
+  // (Android long-press selects text via selectionchange before touchend). The
+  // pending action runs on touchend so popups don't open under an active touch.
+  const deferredQuickActionRef = useRef(createDeferredActionState());
 
   const showingPopup =
-    showAnnotPopup ||
-    showWiktionaryPopup ||
-    showWikipediaPopup ||
-    showDeepLPopup ||
-    showProofreadPopup;
+    showAnnotPopup || showDictionaryPopup || showDeepLPopup || showProofreadPopup;
 
   const popupPadding = useResponsiveSize(10);
   const trianglePadding = popupPadding * 2 + 6;
   const maxWidth = window.innerWidth - 2 * popupPadding;
   const maxHeight = window.innerHeight - 2 * popupPadding;
   const dictPopupWidth = Math.min(480, maxWidth);
-  const dictPopupHeight = Math.min(300, maxHeight);
+  // Tall enough to fit a header + 2-3 expanded cards comfortably. The popup
+  // shows all enabled providers stacked (no tabs) so it needs more vertical
+  // room than the legacy single-tab layout.
+  const dictPopupHeight = Math.min(480, maxHeight);
   const transPopupWidth = Math.min(480, maxWidth);
   const transPopupHeight = Math.min(265, maxHeight);
   const proofreadPopupWidth = Math.min(440, maxWidth);
@@ -173,6 +197,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       viewSettings: getViewSettings(bookKey)!,
       userLocale: getLocale(),
       content: '',
+      isFixedLayout: bookData.isFixedLayout,
       transformers: ['punctuation'],
       reversePunctuationTransform: true,
     }),
@@ -193,8 +218,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     throttle(() => {
       setSelection(null);
       setShowAnnotPopup(false);
-      setShowWiktionaryPopup(false);
-      setShowWikipediaPopup(false);
+      setShowDictionaryPopup(false);
       setShowDeepLPopup(false);
       setShowProofreadPopup(false);
       setEditingAnnotation(null);
@@ -204,6 +228,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
 
   const {
     isTextSelected,
+    isInstantAnnotating,
     handleScroll,
     handleTouchStart,
     handleTouchMove,
@@ -216,7 +241,14 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     handleShowPopup,
     handleUpToPopup,
     handleContextmenu,
-  } = useTextSelector(bookKey, setSelection, getAnnotationText, handleDismissPopup);
+  } = useTextSelector(
+    bookKey,
+    setSelection,
+    setEditingAnnotation,
+    setExternalDragPoint,
+    getAnnotationText,
+    handleDismissPopup,
+  );
 
   const handleDismissPopupAndSelection = () => {
     handleDismissPopup();
@@ -232,7 +264,9 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       // Available on iOS, on Android not fired
       // To make the popup not follow the selection while dragging
       setShowAnnotPopup(false);
-      setEditingAnnotation(null);
+      if (!isInstantAnnotating.current) {
+        setEditingAnnotation(null);
+      }
       handleTouchMove(ev);
     };
 
@@ -240,11 +274,13 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       const ev = event.detail as NativeTouchEventType;
       if (ev.type === 'touchstart') {
         androidTouchEndRef.current = false;
+        cancelDeferredAction(deferredQuickActionRef.current);
         handleTouchStart();
       } else if (ev.type === 'touchend') {
         androidTouchEndRef.current = true;
         handleTouchEnd();
         handlePointerUp(doc, index);
+        flushDeferredAction(deferredQuickActionRef.current);
       }
     };
 
@@ -271,7 +307,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     detail.doc?.addEventListener('selectionchange', handleSelectionchange.bind(null, doc, index));
 
     // For PDF selections, enable right-click context menu to directly open translator popup.
-    if (bookData.book?.format === 'PDF') {
+    if (bookData.isFixedLayout) {
       detail.doc?.addEventListener('contextmenu', (e: Event) => {
         try {
           const sel = doc.getSelection?.();
@@ -279,12 +315,18 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
             const range = sel.getRangeAt(0);
             const text = sel.toString();
             if (text.trim()) {
-              setSelection({ key: bookKey, text, range, index, cfi: view?.getCFI(index, range) });
+              setSelection({
+                key: bookKey,
+                text,
+                range,
+                index,
+                cfi: view?.getCFI(index, range),
+                page: index + 1,
+              });
               // Show translation popup preferentially for PDF right-click
               setShowAnnotPopup(false);
               setShowDeepLPopup(true);
-              setShowWiktionaryPopup(false);
-              setShowWikipediaPopup(false);
+              setShowDictionaryPopup(false);
             }
           }
         } catch (err) {
@@ -299,6 +341,25 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
 
     // Disable the default context menu on mobile devices (selection handles suffice)
     detail.doc?.addEventListener('contextmenu', handleContextmenu);
+  };
+
+  const onCreateOverlay = (event: Event) => {
+    const detail = (event as CustomEvent).detail;
+    const { booknotes = [] } = getConfig(bookKey)!;
+    booknotes
+      .filter(
+        (booknote) =>
+          booknote.type === 'annotation' &&
+          !booknote.deletedAt &&
+          getIndexFromCfi(booknote.cfi) === detail.index,
+      )
+      .map((annotation) => {
+        try {
+          view?.addAnnotation(annotation);
+        } catch (err) {
+          console.warn('Failed to add annotation', { annotation, error: err });
+        }
+      });
   };
 
   const onDrawAnnotation = (event: Event) => {
@@ -364,8 +425,9 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       note: note ?? '',
       rect: isNote ? detail.rect : undefined,
       cfi,
-      range,
       index,
+      range,
+      page: annotation.page || progress.page,
     };
     if (isNote) {
       setShowAnnotationNotes(true);
@@ -388,7 +450,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     handleUpToPopup();
   };
 
-  useFoliateEvents(view, { onLoad, onDrawAnnotation, onShowAnnotation });
+  useFoliateEvents(view, { onLoad, onCreateOverlay, onDrawAnnotation, onShowAnnotation });
 
   useEffect(() => {
     handleShowPopup(showingPopup);
@@ -419,34 +481,65 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const updateBooknotesPage = async () => {
+      const config = getConfig(bookKey);
+      const view = getView(bookKey);
+      if (!config || !view) return;
+      const { booknotes: annotations = [] } = config;
+      annotations.sort((a, b) => {
+        return CFI.compare(a.cfi, b.cfi);
+      });
+      for (const annotation of annotations) {
+        if (annotation.deletedAt || annotation.page || !annotation.cfi) continue;
+        const progress = await view.getCFIProgress(annotation.cfi);
+        if (progress) {
+          annotation.page = progress.location.current + 1;
+        }
+      }
+      const updatedConfig = updateBooknotes(bookKey, annotations);
+      if (updatedConfig) {
+        saveConfig(envConfig, bookKey, updatedConfig, settings);
+      }
+    };
+    setTimeout(updateBooknotesPage, 3000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleQuickAction = () => {
     const action = viewSettings.annotationQuickAction;
-    if (appService?.isAndroidApp && !androidTouchEndRef.current) return;
-    switch (action) {
-      case 'copy':
-        handleCopy(false);
-        handleDismissPopupAndSelection();
-        break;
-      case 'highlight':
-        // highlight is already applied in instant annotating
-        handleDismissPopupAndSelection();
-        break;
-      case 'search':
-        handleSearch();
-        break;
-      case 'dictionary':
-        handleDictionary();
-        break;
-      case 'wikipedia':
-        handleWikipedia();
-        break;
-      case 'translate':
-        handleTranslation();
-        break;
-      case 'tts':
-        handleSpeakText(true);
-        break;
-    }
+    const runAction = () => {
+      switch (action) {
+        case 'copy':
+          handleCopy(false);
+          handleDismissPopupAndSelection();
+          break;
+        case 'highlight':
+          // highlight is already applied in instant annotating
+          handleDismissPopupAndSelection();
+          break;
+        case 'search':
+          handleSearch();
+          break;
+        case 'dictionary':
+          handleDictionary();
+          break;
+        case 'translate':
+          handleTranslation();
+          break;
+        case 'tts':
+          handleSpeakText(true);
+          break;
+      }
+    };
+    // On Android, a long-press fires selectionchange (and this handler) while
+    // the finger is still down. Defer until touchend so popups aren't dismissed
+    // by the in-progress touch (closes #3935).
+    runOrDeferAction(
+      deferredQuickActionRef.current,
+      !!appService?.isAndroidApp && !androidTouchEndRef.current,
+      runAction,
+    );
   };
 
   useEffect(() => {
@@ -551,8 +644,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     }
     setShowAnnotPopup(true);
     setShowDeepLPopup(false);
-    setShowWiktionaryPopup(false);
-    setShowWikipediaPopup(false);
+    setShowDictionaryPopup(false);
   };
 
   const handleCopy = (dismissPopup = true) => {
@@ -581,8 +673,9 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       id: uniqueId(),
       type: 'excerpt',
       cfi,
-      text: selection.text,
       note: '',
+      text: selection.text,
+      page: selection.page,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -623,6 +716,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       color,
       text: selection.text,
       note: '',
+      page: progress.page,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -681,13 +775,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
   const handleDictionary = () => {
     if (!selection || !selection.text) return;
     setShowAnnotPopup(false);
-    setShowWiktionaryPopup(true);
-  };
-
-  const handleWikipedia = () => {
-    if (!selection || !selection.text) return;
-    setShowAnnotPopup(false);
-    setShowWikipediaPopup(true);
+    setShowDictionaryPopup(true);
   };
 
   const handleTranslation = () => {
@@ -700,7 +788,12 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     if (!selection || !selection.text) return;
     setShowAnnotPopup(false);
     setEditingAnnotation(null);
-    eventDispatcher.dispatch('tts-speak', { bookKey, range: selection.range, oneTime });
+    eventDispatcher.dispatch('tts-speak', {
+      bookKey,
+      oneTime,
+      range: selection.range,
+      index: selection.index,
+    });
   };
 
   const handleProofread = () => {
@@ -745,9 +838,6 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
       },
       onDictionarySelection: () => {
         handleDictionary();
-      },
-      onWikipediaSelection: () => {
-        handleWikipedia();
       },
       onReadAloudSelection: () => {
         handleSpeakText();
@@ -812,7 +902,9 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     }, 100);
 
     const filename = `${makeSafeFilename(book.title)}.md`;
-    const saved = await appService?.saveFile(filename, markdownContent, 'text/markdown');
+    const saved = await appService?.saveFile(filename, markdownContent, {
+      mimeType: 'text/markdown',
+    });
     eventDispatcher.dispatch('toast', {
       type: 'info',
       message: saved ? _('Exported successfully') : _('Copied to clipboard'),
@@ -838,26 +930,21 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
           tooltipText: selectionAnnotated ? _('Delete Highlight') : _(label),
           Icon: selectionAnnotated ? RiDeleteBinLine : Icon,
           onClick: handleHighlight,
-          disabled: bookData.book?.format === 'PDF',
         };
       case 'annotate':
         return {
           tooltipText: _(label),
           Icon,
           onClick: handleAnnotate,
-          disabled: bookData.book?.format === 'PDF',
         };
       case 'search':
         return {
           tooltipText: _(label),
           Icon,
           onClick: handleSearch,
-          disabled: bookData.book?.format === 'PDF',
         };
       case 'dictionary':
         return { tooltipText: _(label), Icon, onClick: handleDictionary };
-      case 'wikipedia':
-        return { tooltipText: _(label), Icon, onClick: handleWikipedia };
       case 'translate':
         return { tooltipText: _(label), Icon, onClick: handleTranslation };
       case 'tts':
@@ -865,7 +952,6 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
           tooltipText: _(label),
           Icon,
           onClick: handleSpeakText,
-          disabled: bookData.book?.format === 'PDF',
         };
       case 'proofread':
         return {
@@ -881,28 +967,45 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
 
   return (
     <div ref={containerRef} role='toolbar' tabIndex={-1}>
-      {showWiktionaryPopup && trianglePosition && dictPopupPosition && (
-        <WiktionaryPopup
-          word={selection?.text as string}
-          lang={bookData.bookDoc?.metadata.language as string}
-          position={dictPopupPosition}
-          trianglePosition={trianglePosition}
-          popupWidth={dictPopupWidth}
-          popupHeight={dictPopupHeight}
-          onDismiss={handleDismissPopupAndSelection}
-        />
-      )}
-      {showWikipediaPopup && trianglePosition && dictPopupPosition && (
-        <WikipediaPopup
-          text={selection?.text as string}
-          lang={bookData.bookDoc?.metadata.language as string}
-          position={dictPopupPosition}
-          trianglePosition={trianglePosition}
-          popupWidth={dictPopupWidth}
-          popupHeight={dictPopupHeight}
-          onDismiss={handleDismissPopupAndSelection}
-        />
-      )}
+      {showDictionaryPopup &&
+        (() => {
+          // Below `sm` (or short landscape) we present the dictionary as a
+          // bottom sheet — the anchored popup gets cramped at this size.
+          // Matches the `isMobile` heuristic used by `Dialog`.
+          const useSheet = window.innerWidth < 640 || window.innerHeight < 640;
+          const onManage = () => {
+            // Dismiss so the user returns to the reader cleanly when they
+            // close settings; the dictionaries sub-page in SettingsDialog
+            // is enough surface for managing providers.
+            handleDismissPopupAndSelection();
+            setSettingsDialogBookKey(bookKey);
+            setActiveSettingsItemId('settings.language.dictionaries.manage');
+            setSettingsDialogOpen(true);
+          };
+          if (useSheet) {
+            return (
+              <DictionarySheet
+                word={selection?.text as string}
+                lang={bookData.bookDoc?.metadata.language as string}
+                onDismiss={handleDismissPopupAndSelection}
+                onManage={onManage}
+              />
+            );
+          }
+          if (!trianglePosition || !dictPopupPosition) return null;
+          return (
+            <DictionaryPopup
+              word={selection?.text as string}
+              lang={bookData.bookDoc?.metadata.language as string}
+              position={dictPopupPosition}
+              trianglePosition={trianglePosition}
+              popupWidth={dictPopupWidth}
+              popupHeight={dictPopupHeight}
+              onDismiss={handleDismissPopupAndSelection}
+              onManage={onManage}
+            />
+          );
+        })()}
       {showDeepLPopup && trianglePosition && translatorPopupPosition && (
         <TranslatorPopup
           text={selection?.text as string}
@@ -940,6 +1043,10 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
           popupWidth={proofreadPopupWidth}
           popupHeight={proofreadPopupHeight}
           onDismiss={handleDismissPopupAndSelection}
+          onManage={() => {
+            handleDismissPopupAndSelection();
+            setProofreadRulesVisibility(true);
+          }}
         />
       )}
       {editingAnnotation && editingAnnotation.color && selection && (
@@ -949,6 +1056,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
           annotation={editingAnnotation}
           selection={selection}
           handleColor={selectedColor}
+          externalDragPoint={externalDragPoint}
           getAnnotationText={getAnnotationText}
           setSelection={setSelection}
           onStartEdit={handleStartEditAnnotation}
@@ -958,6 +1066,7 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
         <ExportMarkdownDialog
           bookKey={bookKey}
           isOpen={showExportDialog}
+          bookHash={bookData.book.hash}
           bookTitle={bookData.book.title}
           bookAuthor={bookData.book.author || ''}
           booknotes={exportData.booknotes}

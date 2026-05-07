@@ -4,14 +4,14 @@ import clsx from 'clsx';
 import * as React from 'react';
 import { MdChevronRight } from 'react-icons/md';
 import { useState, useRef, useEffect, Suspense, useCallback } from 'react';
-import { ReadonlyURLSearchParams, useRouter, useSearchParams } from 'next/navigation';
-import { OverlayScrollbarsComponent, OverlayScrollbarsComponentRef } from 'overlayscrollbars-react';
-import 'overlayscrollbars/overlayscrollbars.css';
+import { ReadonlyURLSearchParams, useSearchParams } from 'next/navigation';
 
 import { Book } from '@/types/book';
 import { AppService, DeleteAction } from '@/types/system';
+import { buildBookLookupIndex } from '@/services/bookService';
 import { navigateToLibrary, navigateToReader } from '@/utils/nav';
 import { formatAuthors, formatTitle, getPrimaryLanguage, listFormater } from '@/utils/book';
+import { getImportErrorMessage } from '@/services/errors';
 import { eventDispatcher } from '@/utils/event';
 import { ProgressPayload } from '@/utils/transfer';
 import { throttle } from '@/utils/throttle';
@@ -35,10 +35,15 @@ import { useTheme } from '@/hooks/useTheme';
 import { useUICSS } from '@/hooks/useUICSS';
 import { useDemoBooks } from './hooks/useDemoBooks';
 import { useBooksSync } from './hooks/useBooksSync';
+import { useOPDSSubscriptions } from '@/hooks/useOPDSSubscriptions';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useTransferStore } from '@/store/transferStore';
 import { useScreenWakeLock } from '@/hooks/useScreenWakeLock';
+import { useAppUrlIngress } from '@/hooks/useAppUrlIngress';
 import { useOpenWithBooks } from '@/hooks/useOpenWithBooks';
+import { useOpenAnnotationLink } from '@/hooks/useOpenAnnotationLink';
+import { useOpenShareLink } from '@/hooks/useOpenShareLink';
+import { useKeyDownActions } from '@/hooks/useKeyDownActions';
 import { SelectedFile, useFileSelector } from '@/hooks/useFileSelector';
 import { lockScreenOrientation, selectDirectory } from '@/utils/bridge';
 import { requestStoragePermission } from '@/utils/permission';
@@ -53,12 +58,15 @@ import {
 import { LibraryGroupByType } from '@/types/settings';
 import { BookMetadata } from '@/libs/document';
 import { AboutWindow } from '@/components/AboutWindow';
+import { KeyboardShortcutsHelp } from '@/components/KeyboardShortcutsHelp';
 import { BookDetailModal } from '@/components/metadata';
 import { UpdaterWindow } from '@/components/UpdaterWindow';
 import { CatalogDialog } from './components/OPDSDialog';
 import { MigrateDataWindow } from './components/MigrateDataWindow';
+import { BackupWindow } from './components/BackupWindow';
 import { useDragDropImport } from './hooks/useDragDropImport';
 import { useTransferQueue } from '@/hooks/useTransferQueue';
+import { useAppRouter } from '@/hooks/useAppRouter';
 import { Toast } from '@/components/Toast';
 import {
   createBookGroups,
@@ -71,6 +79,7 @@ import LibraryHeader from './components/LibraryHeader';
 import Bookshelf from './components/Bookshelf';
 import GroupHeader from './components/GroupHeader';
 import useShortcuts from '@/hooks/useShortcuts';
+import { useReplicaPull } from '@/hooks/useReplicaPull';
 import DropIndicator from '@/components/DropIndicator';
 import SettingsDialog from '@/components/settings/SettingsDialog';
 import ModalPortal from '@/components/ModalPortal';
@@ -82,7 +91,7 @@ const LibraryPageWithSearchParams = () => {
 };
 
 const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchParams | null }) => {
-  const router = useRouter();
+  const router = useAppRouter();
   const { envConfig, appService } = useEnv();
   const { token, user } = useAuth();
   const {
@@ -94,7 +103,6 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     setLibrary,
     getGroupId,
     getGroupName,
-    refreshGroups,
     checkOpenWithBooks,
     checkLastOpenBooks,
     setCheckOpenWithBooks,
@@ -107,6 +115,11 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   const { settings, setSettings, saveSettings } = useSettingsStore();
   const { isSettingsDialogOpen, setSettingsDialogOpen } = useSettingsStore();
   const { isTransferQueueOpen } = useTransferStore();
+
+  // Library page pulls user replicas (dictionaries, custom fonts,
+  // background textures). Deferred 10s; module-scoped dedup means a
+  // later navigation to the reader won't re-pull the same kind.
+  useReplicaPull({ kinds: ['dictionary', 'font', 'texture'] });
   const [showCatalogManager, setShowCatalogManager] = useState(
     searchParams?.get('opds') === 'true',
   );
@@ -130,23 +143,51 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   const iconSize = useResponsiveSize(18);
   const viewSettings = settings.globalViewSettings;
   const demoBooks = useDemoBooks();
-  const osRef = useRef<OverlayScrollbarsComponentRef>(null);
-  const containerRef: React.MutableRefObject<HTMLDivElement | null> = useRef(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const handleScrollerRef = useCallback((el: HTMLDivElement | null) => {
+    scrollRef.current = el;
+  }, []);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const pageRef = useRef<HTMLDivElement>(null);
+
+  const getScrollKey = (group: string) => `library-scroll-${group || 'all'}`;
+
+  const saveScrollPosition = (group: string) => {
+    if (scrollRef.current) {
+      sessionStorage.setItem(getScrollKey(group), scrollRef.current.scrollTop.toString());
+    }
+  };
+
+  const restoreScrollPosition = useCallback((group: string) => {
+    const savedPosition = sessionStorage.getItem(getScrollKey(group));
+    if (savedPosition && scrollRef.current) {
+      scrollRef.current.scrollTop = parseInt(savedPosition, 10);
+    }
+  }, []);
 
   useTheme({ systemUIVisible: true, appThemeColor: 'base-200' });
   useUICSS();
 
+  useAppUrlIngress();
   useOpenWithBooks();
+  useOpenAnnotationLink();
+  useOpenShareLink();
   useTransferQueue(libraryLoaded);
 
   const { pullLibrary, pushLibrary } = useBooksSync();
+  const { checkOPDSSubscriptions } = useOPDSSubscriptions();
   const { isDragging } = useDragDropImport();
 
   usePullToRefresh(
-    containerRef,
-    pullLibrary.bind(null, false, true),
-    pullLibrary.bind(null, true, true),
+    scrollRef,
+    async () => {
+      await pullLibrary(false, true);
+      checkOPDSSubscriptions(true);
+    },
+    async () => {
+      await pullLibrary(true, true);
+      checkOPDSSubscriptions(true);
+    },
   );
   useScreenWakeLock(settings.screenWakeLock);
 
@@ -178,6 +219,74 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     sessionStorage.setItem('lastLibraryParams', searchParams?.toString() || '');
   }, [searchParams]);
 
+  // Strip the empty `group=` param that `handleLibraryNavigation` sets as a
+  // workaround for a Next.js 16.2 static-export regression (see the NOTE
+  // above `handleLibraryNavigation` for full context). This effect runs
+  // after the router.replace() has committed, so React has already
+  // re-rendered with the new (empty) group state; we're only rewriting the
+  // URL cosmetically via window.history.replaceState — Next.js' patched
+  // replaceState will pick up the new canonical URL without triggering
+  // another navigation.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (searchParams?.get('group') !== '') return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('group');
+    const cleanHref = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState(null, '', cleanHref);
+  }, [searchParams]);
+
+  // Unified navigation function that handles scroll position and direction.
+  // Workaround for a Next.js 16.2 static-export regression: navigating to a
+  // same-pathname URL with an empty search string causes `router.replace()`
+  // to silently no-op (e.g. `/library?group=foo` -> `/library`), which broke
+  // the breadcrumb "All" button. By always calling `params.set('group',
+  // targetGroup)` — including when `targetGroup` is an empty string — the
+  // resulting URL becomes `/library?group=` instead of `/library`, which
+  // Next.js does commit. The trailing empty `group=` is stripped via a
+  // cleanup effect below (purely cosmetic URL rewrite). See
+  // https://github.com/readest/readest/issues/3782.
+  const handleLibraryNavigation = useCallback(
+    (targetGroup: string) => {
+      const currentGroup = searchParams?.get('group') || '';
+
+      // Save current scroll position BEFORE navigation
+      saveScrollPosition(currentGroup);
+
+      // Detect and set navigation direction
+      const direction = currentGroup && !targetGroup ? 'back' : 'forward';
+      document.documentElement.setAttribute('data-nav-direction', direction);
+
+      // Build query params — always `set` so the search string is non-empty
+      // even when targetGroup is '' (the Next.js 16.2 workaround).
+      const params = new URLSearchParams(searchParams?.toString());
+      params.set('group', targetGroup);
+
+      navigateToLibrary(router, `${params.toString()}`);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [searchParams, router],
+  );
+
+  const handleBackUpOneGroupLevel = () => {
+    if (!currentGroupPath) return;
+    const segments = currentGroupPath.split('/');
+    const parentPath = segments.length > 1 ? segments.slice(0, -1).join('/') : undefined;
+    const parentGroupId = parentPath ? getGroupId(parentPath) || '' : '';
+    setIsSelectAll(false);
+    setIsSelectNone(false);
+    handleLibraryNavigation(parentGroupId);
+  };
+
+  const handleBackUpOneGroupLevelRef = useRef(handleBackUpOneGroupLevel);
+  handleBackUpOneGroupLevelRef.current = handleBackUpOneGroupLevel;
+  const triggerBackUpOneGroupLevel = useCallback(() => handleBackUpOneGroupLevelRef.current(), []);
+
+  useKeyDownActions({
+    onCancel: triggerBackUpOneGroupLevel,
+    enabled: !!appService?.isAndroidApp && !!currentGroupPath,
+  });
+
   useEffect(() => {
     const doCheckAppUpdates = async () => {
       if (appService?.hasUpdater && settings.autoCheckUpdates) {
@@ -199,27 +308,28 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     }
   }, [appService]);
 
-  const handleRefreshLibrary = useCallback(async () => {
-    const appService = await envConfig.getAppService();
-    const settings = await appService.loadSettings();
-    const library = await appService.loadLibraryBooks();
-    setSettings(settings);
-    setLibrary(library);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [envConfig, appService]);
-
   useEffect(() => {
     if (appService?.hasWindow) {
       const currentWebview = getCurrentWebview();
       const unlisten = currentWebview.listen('close-reader-window', async () => {
-        handleRefreshLibrary();
+        // Reader windows are independent Tauri webviews with their own
+        // libraryStore instance — progress / readingStatus / move-to-front
+        // updates from the reader window do NOT propagate to this main
+        // window's store. Reload from disk so the library reflects the
+        // changes the reader just persisted.
+        const appService = await envConfig.getAppService();
+        const settings = await appService.loadSettings();
+        const library = await appService.loadLibraryBooks();
+        setSettings(settings);
+        setLibrary(library);
       });
       return () => {
         unlisten.then((fn) => fn());
       };
     }
     return;
-  }, [appService, handleRefreshLibrary]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appService, envConfig]);
 
   const handleImportBookFiles = useCallback(async (event: CustomEvent) => {
     const selectedFiles: SelectedFile[] = event.detail.files;
@@ -229,15 +339,23 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    eventDispatcher.on('import-book-files', handleImportBookFiles);
-    return () => {
-      eventDispatcher.off('import-book-files', handleImportBookFiles);
-    };
-  }, [handleImportBookFiles]);
+  const handleImportBookDirectory = useCallback(async (event: CustomEvent) => {
+    const dirPath: string | undefined = event.detail?.path;
+    if (!dirPath) return;
+    await handleImportBooksFromDirectory(dirPath);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
-    refreshGroups();
+    eventDispatcher.on('import-book-files', handleImportBookFiles);
+    eventDispatcher.on('import-book-directory', handleImportBookDirectory);
+    return () => {
+      eventDispatcher.off('import-book-files', handleImportBookFiles);
+      eventDispatcher.off('import-book-directory', handleImportBookDirectory);
+    };
+  }, [handleImportBookFiles, handleImportBookDirectory]);
+
+  useEffect(() => {
     if (!libraryBooks.some((book) => !book.deletedAt)) {
       handleSetSelectMode(false);
     }
@@ -252,7 +370,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         console.log('Open with book:', file);
         try {
           const temp = appService.isMobile ? false : !settings.autoImportBooksOnOpen;
-          const book = await appService.importBook(file, libraryBooks, true, true, false, temp);
+          const book = await appService.importBook(file, libraryBooks, { transient: temp });
           if (book) {
             bookIds.push(book.hash);
           }
@@ -341,7 +459,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       }
     };
 
-    const loadingTimeout = setTimeout(() => setLoading(true), 300);
+    const loadingTimeout = setTimeout(() => setLoading(true), 500);
     const initLibrary = async () => {
       const appService = await envConfig.getAppService();
       const settings = await appService.loadSettings();
@@ -381,6 +499,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       setCheckLastOpenBooks(false);
       isInitiating.current = false;
     };
+    // searchParams is used to tigger parsing OPEN_WITH_FILES
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -389,6 +508,11 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     const groupName = getGroupName(group);
     setCurrentGroupPath(groupName);
   }, [libraryBooks, searchParams, getGroupName]);
+
+  useEffect(() => {
+    const group = searchParams?.get('group') || '';
+    restoreScrollPosition(group);
+  }, [searchParams, restoreScrollPosition]);
 
   // Track current series/author group for navigation header
   useEffect(() => {
@@ -440,22 +564,19 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   const importBooks = async (files: SelectedFile[], groupId?: string) => {
     setLoading(true);
     const { library } = useLibraryStore.getState();
+    // Build the lookup index ONCE per import batch so each book lookup is
+    // O(1) instead of O(n) over the existing library. importBook also keeps
+    // the index updated as new books are appended, so subsequent files in
+    // the same batch see the additions.
+    const lookupIndex = buildBookLookupIndex(library);
     const failedImports: Array<{ filename: string; errorMessage: string }> = [];
     const successfulImports: string[] = [];
-    const errorMap: [string, string][] = [
-      ['No chapters detected', _('No chapters detected')],
-      ['Failed to parse EPUB', _('Failed to parse the EPUB file')],
-      ['Unsupported format', _('This book format is not supported')],
-      ['Failed to open file', _('Failed to open the book file')],
-      ['Invalid or empty book file', _('The book file is empty')],
-      ['Unsupported or corrupted book file', _('The book file is corrupted')],
-    ];
 
     const processFile = async (selectedFile: SelectedFile): Promise<Book | null> => {
       const file = selectedFile.file || selectedFile.path;
       if (!file) return null;
       try {
-        const book = await appService?.importBook(file, library);
+        const book = await appService?.importBook(file, library, { lookupIndex });
         if (!book) return null;
         const { path, basePath } = selectedFile;
         if (groupId) {
@@ -477,10 +598,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       } catch (error) {
         const filename = typeof file === 'string' ? file : file.name;
         const baseFilename = getFilename(filename);
-        const errorMessage =
-          error instanceof Error
-            ? errorMap.find(([str]) => error.message.includes(str))?.[1] || error.message
-            : '';
+        const errorMessage = error instanceof Error ? _(getImportErrorMessage(error.message)) : '';
         failedImports.push({ filename: baseFilename, errorMessage });
         console.error('Failed to import book:', filename, error);
         return null;
@@ -491,7 +609,18 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     for (let i = 0; i < files.length; i += concurrency) {
       const batch = files.slice(i, i + concurrency);
       const importedBooks = (await Promise.all(batch.map(processFile))).filter((book) => !!book);
-      await updateBooks(envConfig, importedBooks);
+      // Update store state per batch (so the UI can render imported books
+      // incrementally) but defer disk persistence until the entire batch is
+      // done — saving library.json once per batch of 4 books was the dominant
+      // cost for large imports.
+      await updateBooks(envConfig, importedBooks, { skipSave: true });
+    }
+
+    // Persist the full library once after every file in the batch is done.
+    if (successfulImports.length > 0) {
+      const finalLibrary = useLibraryStore.getState().library;
+      const finalAppService = await envConfig.getAppService();
+      await finalAppService.saveLibraryBooks(finalLibrary);
     }
 
     pushLibrary();
@@ -688,19 +817,21 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     });
   };
 
-  const handleImportBooksFromDirectory = async () => {
+  const handleImportBooksFromDirectory = async (dirPath?: string) => {
     if (!appService || !isTauriAppPlatform()) return;
 
     setIsSelectMode(false);
     console.log('Importing books from directory...');
-    let importDirectory: string | undefined = '';
-    if (appService.isAndroidApp) {
-      if (!(await requestStoragePermission())) return;
-      const response = await selectDirectory();
-      importDirectory = response.path;
-    } else {
-      const selectedDir = await appService.selectDirectory?.('read');
-      importDirectory = selectedDir;
+    let importDirectory: string | undefined = dirPath;
+    if (!importDirectory) {
+      if (appService.isAndroidApp) {
+        if (!(await requestStoragePermission())) return;
+        const response = await selectDirectory();
+        importDirectory = response.path;
+      } else {
+        const selectedDir = await appService.selectDirectory?.('read');
+        importDirectory = selectedDir;
+      }
     }
     if (!importDirectory) {
       console.log('No directory selected');
@@ -746,19 +877,10 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   };
 
   const handleNavigateToPath = (path: string | undefined) => {
-    const group = path ? getGroupId(path) : '';
-    const params = new URLSearchParams(searchParams?.toString());
-    if (group) {
-      params.set('group', group);
-    } else {
-      params.delete('group');
-    }
+    const group = path ? getGroupId(path) || '' : '';
     setIsSelectAll(false);
     setIsSelectNone(false);
-    navigateToLibrary(router, `${params.toString()}`);
-    setTimeout(() => {
-      setCurrentGroupPath(path);
-    }, 300);
+    handleLibraryNavigation(group);
   };
 
   if (!appService || !insets || checkOpenWithBooks || checkLastOpenBooks) {
@@ -770,7 +892,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   return (
     <div
       ref={pageRef}
-      aria-label='Your Library'
+      aria-label={_('Your Library')}
       className={clsx(
         'library-page text-base-content full-height flex select-none flex-col overflow-hidden',
         viewSettings?.isEink ? 'bg-base-100' : 'bg-base-200',
@@ -854,27 +976,15 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       )}
       {showBookshelf &&
         (libraryBooks.some((book) => !book.deletedAt) ? (
-          <OverlayScrollbarsComponent
-            defer
-            aria-label=''
-            ref={osRef}
-            className='flex-grow'
-            options={{ scrollbars: { autoHide: 'scroll' } }}
-            events={{
-              initialized: (instance) => {
-                const { content } = instance.elements();
-                if (content) {
-                  containerRef.current = content as HTMLDivElement;
-                }
-              },
-            }}
-          >
+          <div aria-label={_('Your Bookshelf')} className='flex min-h-0 flex-grow flex-col'>
             <div
-              className={clsx('scroll-container drop-zone flex-grow', isDragging && 'drag-over')}
+              ref={containerRef}
+              className={clsx(
+                'scroll-container drop-zone flex min-h-0 flex-grow flex-col',
+                isDragging && 'drag-over',
+              )}
               style={{
-                paddingTop: '0px',
                 paddingRight: `${insets.right}px`,
-                paddingBottom: `${insets.bottom}px`,
                 paddingLeft: `${insets.left}px`,
               }}
             >
@@ -884,17 +994,19 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
                 isSelectMode={isSelectMode}
                 isSelectAll={isSelectAll}
                 isSelectNone={isSelectNone}
+                onScrollerRef={handleScrollerRef}
                 handleImportBooks={handleImportBooksFromFiles}
                 handleBookUpload={handleBookUpload}
                 handleBookDownload={handleBookDownload}
                 handleBookDelete={handleBookDelete('both')}
                 handleSetSelectMode={handleSetSelectMode}
                 handleShowDetailsBook={handleShowDetailsBook}
+                handleLibraryNavigation={handleLibraryNavigation}
                 booksTransferProgress={booksTransferProgress}
                 handlePushLibrary={pushLibrary}
               />
             </div>
-          </OverlayScrollbarsComponent>
+          </div>
         ) : (
           <div className='hero drop-zone h-screen items-center justify-center'>
             <DropIndicator />
@@ -932,8 +1044,10 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         </ModalPortal>
       )}
       <AboutWindow />
+      <KeyboardShortcutsHelp />
       <UpdaterWindow />
       <MigrateDataWindow />
+      <BackupWindow onPullLibrary={pullLibrary} />
       {isSettingsDialogOpen && <SettingsDialog bookKey={''} />}
       {showCatalogManager && <CatalogDialog onClose={handleDismissOPDSDialog} />}
       <Toast />

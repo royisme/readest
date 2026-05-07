@@ -64,9 +64,11 @@ export const webDownload = async (
   const responseHeaders = Object.fromEntries(response.headers.entries());
   const contentLength =
     response.headers.get('Content-Length') || response.headers.get('X-Content-Length');
-  if (!contentLength) throw new Error('Cannot track progress: Content-Length missing');
-
-  const totalSize = parseInt(contentLength, 10);
+  // R2/S3 signed URLs frequently don't expose Content-Length over CORS, so
+  // missing length is common in the wild. Fall back to indeterminate
+  // progress (total=0) instead of failing the download. UI callers already
+  // guard `total === 0` to skip percentage updates.
+  const totalSize = parseInt(contentLength || '0', 10);
   let receivedSize = 0;
   const reader = response.body!.getReader();
   const chunks: Uint8Array[] = [];

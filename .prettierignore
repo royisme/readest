@@ -22,9 +22,13 @@ gen
 # Submodules (External Repos)
 packages
 
+# Claude Code Skills & Config
+apps/readest-app/.claude
+
 # Vendored Assets (Generated/External Code)
 apps/readest-app/public/*.js
 apps/readest-app/public/vendor
+apps/readest-app/src-tauri/plugins/tauri-plugin-turso
 
 # Environment & Editor
 .env
