@@ -29,6 +29,7 @@
     "test:pr:tauri": "bash scripts/test-tauri.sh",
     "test:all": "pnpm test -- --watch=false && pnpm test:browser && bash scripts/test-tauri.sh",
     "test:e2e": "wdio run wdio.conf.ts",
+    "test:tts:live": "bash ./scripts/tts-live-smoke.sh",
     "tauri:dev:test": "dotenv -e .env.tauri -- tauri dev --features webdriver",
     "tauri:build:test": "dotenv -e .env.tauri -- tauri build --debug --features webdriver",
     "tauri": "tauri",

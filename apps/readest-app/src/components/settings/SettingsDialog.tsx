@@ -143,7 +143,6 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     Control: null,
     TTS: null,
     Language: null,
-    TTS: null,
     AI: null,
     Custom: null,
   });
@@ -177,7 +176,6 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
         control: 'Control',
         tts: 'TTS',
         language: 'Language',
-        tts: 'TTS',
         ai: 'AI',
         custom: 'Custom',
       };
@@ -393,7 +391,7 @@ const SettingsDialog: React.FC<{ bookKey: string }> = ({ bookKey }) => {
             />
             <TTSSettingsPanel
               bookKey={bookKey}
-              onRegisterReset={(fn) => registerResetFunction('TTSSettings', fn)}
+              onRegisterReset={(fn) => registerResetFunction('TTS', fn)}
             />
           </>
         )}

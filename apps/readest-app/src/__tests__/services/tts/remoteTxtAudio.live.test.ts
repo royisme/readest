@@ -8,17 +8,19 @@ type Segment = {
 };
 
 const ENV = {
-  enabled: process.env.TTS_LIVE_TEST === '1',
-  txtPath: process.env.TTS_LIVE_TXT_PATH || '',
-  baseUrl: (process.env.TTS_LIVE_BASE_URL || '').replace(/\/+$/, ''),
-  apiKey: process.env.TTS_LIVE_API_KEY || '',
-  model: process.env.TTS_LIVE_MODEL || 'voxcpm-1.5',
-  voice: process.env.TTS_LIVE_VOICE || 'default',
-  responseFormat: (process.env.TTS_LIVE_RESPONSE_FORMAT || 'mp3').toLowerCase(),
-  preferredMaxChars: Number(process.env.TTS_LIVE_SEGMENT_PREFERRED || 260),
-  absoluteMaxChars: Number(process.env.TTS_LIVE_SEGMENT_ABSOLUTE || 500),
-  limitSegments: Number(process.env.TTS_LIVE_LIMIT_SEGMENTS || 30),
-  outputDir: process.env.TTS_LIVE_OUTPUT_DIR || '',
+  enabled: process.env['TTS_LIVE_TEST'] === '1',
+  txtPath: process.env['TTS_LIVE_TXT_PATH'] || '',
+  baseUrl: (process.env['TTS_LIVE_BASE_URL'] || '').replace(/\/+$/, ''),
+  apiKey: process.env['TTS_LIVE_API_KEY'] || '',
+  model: process.env['TTS_LIVE_MODEL'] || 'voxcpm-1.5',
+  voice: process.env['TTS_LIVE_VOICE'] || 'default',
+  responseFormat: (process.env['TTS_LIVE_RESPONSE_FORMAT'] || 'mp3').toLowerCase(),
+  preferredMaxChars: Number(process.env['TTS_LIVE_SEGMENT_PREFERRED'] || 260),
+  absoluteMaxChars: Number(process.env['TTS_LIVE_SEGMENT_ABSOLUTE'] || 500),
+  limitSegments: Number(process.env['TTS_LIVE_LIMIT_SEGMENTS'] || 30),
+  outputDir: process.env['TTS_LIVE_OUTPUT_DIR'] || '',
+  timeoutMs: Number(process.env['TTS_LIVE_TIMEOUT_MS'] || 180000),
+  requestTimeoutMs: Number(process.env['TTS_LIVE_REQUEST_TIMEOUT_MS'] || 60000),
 };
 
 const STRONG_BREAK = new Set(['。', '！', '？', '；', '…', '!', '?', ';']);
@@ -159,7 +161,9 @@ const must = (condition: unknown, message: string) => {
 };
 
 describe('Remote TTS txt live smoke', () => {
-  it.skipIf(!ENV.enabled)('should generate playable audio clips from txt content', async () => {
+  it.skipIf(!ENV.enabled)(
+    'should generate playable audio clips from txt content',
+    async () => {
     must(ENV.txtPath, 'Missing TTS_LIVE_TXT_PATH');
     must(ENV.baseUrl, 'Missing TTS_LIVE_BASE_URL');
 
@@ -183,8 +187,12 @@ describe('Remote TTS txt live smoke', () => {
 
     for (const segment of segments) {
       const startedAt = Date.now();
+      console.log(
+        `[live-tts] segment ${segment.index + 1}/${segments.length}, chars=${segment.text.length}`,
+      );
       const response = await fetch(`${ENV.baseUrl}/audio/speech`, {
         method: 'POST',
+        signal: AbortSignal.timeout(ENV.requestTimeoutMs),
         headers: {
           'Content-Type': 'application/json',
           ...(ENV.apiKey ? { Authorization: `Bearer ${ENV.apiKey}` } : {}),
@@ -247,6 +255,8 @@ describe('Remote TTS txt live smoke', () => {
     );
 
     console.log(`Live TTS output written to: ${outputDir}`);
-    expect(requestLog.length).toBe(segments.length);
-  });
+      expect(requestLog.length).toBe(segments.length);
+    },
+    ENV.timeoutMs,
+  );
 });
