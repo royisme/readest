@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { addPluginListener, invoke } from '@tauri-apps/api/core';
 
 export interface CopyURIRequest {
   uri: string;
@@ -168,6 +168,45 @@ export async function getSystemColorScheme(): Promise<GetSystemColorSchemeRespon
     'plugin:native-bridge|get_system_color_scheme',
   );
   return result;
+}
+
+// Subscribes to native iOS UITraitCollection.userInterfaceStyle changes pushed
+// from the native-bridge plugin. The WebKit `prefers-color-scheme` media-query
+// `change` event is unreliable on iOS WKWebView when the system theme is
+// toggled in the foreground (Control Center), so we rely on a native push
+// instead. Returns a synchronous unsubscribe function; the underlying plugin
+// listener registration is async and best-effort.
+export function subscribeNativeColorScheme(
+  callback: (colorScheme: 'light' | 'dark') => void,
+): () => void {
+  let unlisten: (() => void) | null = null;
+  let cancelled = false;
+  addPluginListener<{ colorScheme: 'light' | 'dark' }>(
+    'native-bridge',
+    'system-color-scheme-changed',
+    (payload) => {
+      if (payload?.colorScheme === 'dark' || payload?.colorScheme === 'light') {
+        callback(payload.colorScheme);
+      }
+    },
+  )
+    .then((listener) => {
+      if (cancelled) {
+        listener.unregister();
+        return;
+      }
+      unlisten = () => listener.unregister();
+    })
+    .catch(() => {
+      // Plugin not loaded (e.g. non-iOS, web build, or older native bundle
+      // without the trait observer). Silent — the matchMedia path remains
+      // wired as a fallback.
+    });
+  return () => {
+    cancelled = true;
+    unlisten?.();
+    unlisten = null;
+  };
 }
 
 export async function getSafeAreaInsets(): Promise<GetSafeAreaInsetsResponse> {

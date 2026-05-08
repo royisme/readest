@@ -10,8 +10,10 @@ vi.mock('@/utils/style', () => ({
   })),
 }));
 
+const mockSubscribeNativeColorScheme = vi.fn();
 vi.mock('@/utils/bridge', () => ({
   getSystemColorScheme: vi.fn(() => Promise.resolve({ colorScheme: 'light' })),
+  subscribeNativeColorScheme: (...args: unknown[]) => mockSubscribeNativeColorScheme(...args),
 }));
 
 vi.mock('@tauri-apps/api/window', () => ({
@@ -25,7 +27,8 @@ vi.mock('@/services/environment', () => ({
   isWebAppPlatform: vi.fn(() => false),
 }));
 
-import { useThemeStore, loadDataTheme } from '@/store/themeStore';
+import { useThemeStore, loadDataTheme, initSystemThemeListener } from '@/store/themeStore';
+import type { AppService } from '@/types/system';
 
 describe('themeStore', () => {
   beforeEach(() => {
@@ -254,6 +257,46 @@ describe('themeStore', () => {
       document.documentElement.removeAttribute('data-theme');
       loadDataTheme();
       expect(document.documentElement.getAttribute('data-theme')).toBeNull();
+    });
+  });
+
+  describe('initSystemThemeListener (iOS native push)', () => {
+    beforeEach(() => {
+      mockSubscribeNativeColorScheme.mockReset();
+    });
+
+    test('subscribes to native color scheme events on iOS', () => {
+      mockSubscribeNativeColorScheme.mockReturnValue(() => {});
+      const fakeAppService = { isIOSApp: true, hasWindow: false, isLinuxApp: false } as AppService;
+      initSystemThemeListener(fakeAppService);
+      expect(mockSubscribeNativeColorScheme).toHaveBeenCalledTimes(1);
+      expect(typeof mockSubscribeNativeColorScheme.mock.calls[0]?.[0]).toBe('function');
+    });
+
+    test('updates store when native push reports dark', () => {
+      let pushColorScheme: ((scheme: 'light' | 'dark') => void) | null = null;
+      mockSubscribeNativeColorScheme.mockImplementation(
+        (cb: (scheme: 'light' | 'dark') => void) => {
+          pushColorScheme = cb;
+          return () => {};
+        },
+      );
+      const fakeAppService = { isIOSApp: true, hasWindow: false, isLinuxApp: false } as AppService;
+      initSystemThemeListener(fakeAppService);
+
+      useThemeStore.setState({ themeMode: 'auto', themeColor: 'default' });
+      pushColorScheme!('dark');
+
+      const state = useThemeStore.getState();
+      expect(state.systemIsDarkMode).toBe(true);
+      expect(state.isDarkMode).toBe(true);
+      expect(localStorage.getItem('systemIsDarkMode')).toBe('true');
+    });
+
+    test('does not subscribe to native push on non-iOS', () => {
+      const fakeAppService = { isIOSApp: false, hasWindow: false, isLinuxApp: false } as AppService;
+      initSystemThemeListener(fakeAppService);
+      expect(mockSubscribeNativeColorScheme).not.toHaveBeenCalled();
     });
   });
 

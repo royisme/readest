@@ -417,12 +417,30 @@ extension WebViewLifecycleManager: WKNavigationDelegate {
   }
 }
 
+// Hidden subview attached to the WebView whose only job is to observe
+// UITraitCollection.userInterfaceStyle changes. We use a UIView subclass
+// because traitCollectionDidChange is the only iOS 15-compatible way to
+// react to live theme changes; iOS 17+ has registerForTraitChanges but we
+// need to support iOS 15+.
+class TraitChangeObserverView: UIView {
+  var onUserInterfaceStyleChange: ((UIUserInterfaceStyle) -> Void)?
+
+  override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+    super.traitCollectionDidChange(previousTraitCollection)
+    let current = traitCollection.userInterfaceStyle
+    if previousTraitCollection?.userInterfaceStyle != current {
+      onUserInterfaceStyleChange?(current)
+    }
+  }
+}
+
 class NativeBridgePlugin: Plugin {
   private var webView: WKWebView?
   private var authSession: ASWebAuthenticationSession?
   private var currentOrientationMask: UIInterfaceOrientationMask = .all
   private var originalDelegate: UIApplicationDelegate?
   private var webViewLifecycleManager: WebViewLifecycleManager?
+  private var traitObserverView: TraitChangeObserverView?
 
   @objc public override func load(webview: WKWebView) {
     self.webView = webview
@@ -459,6 +477,20 @@ class NativeBridgePlugin: Plugin {
     } else {
       Logger.error("NativeBridgePlugin: Failed to get shared application")
     }
+
+    setupTraitObserver(webview: webview)
+  }
+
+  private func setupTraitObserver(webview: WKWebView) {
+    let observer = TraitChangeObserverView(frame: CGRect(x: -1, y: -1, width: 1, height: 1))
+    observer.isHidden = true
+    observer.isUserInteractionEnabled = false
+    observer.onUserInterfaceStyleChange = { [weak self] style in
+      let colorScheme = (style == .dark) ? "dark" : "light"
+      self?.trigger("system-color-scheme-changed", data: ["colorScheme": colorScheme])
+    }
+    webview.addSubview(observer)
+    self.traitObserverView = observer
   }
 
   @objc func appWillEnterForeground() {
@@ -496,6 +528,9 @@ class NativeBridgePlugin: Plugin {
   deinit {
     webViewLifecycleManager?.stopMonitoring()
     webViewLifecycleManager = nil
+
+    traitObserverView?.removeFromSuperview()
+    traitObserverView = nil
 
     NotificationCenter.default.removeObserver(self)
   }

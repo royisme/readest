@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { AppService } from '@/types/system';
 import { getThemeCode, ThemeCode } from '@/utils/style';
-import { getSystemColorScheme } from '@/utils/bridge';
+import { getSystemColorScheme, subscribeNativeColorScheme } from '@/utils/bridge';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { CustomTheme, Palette, ThemeMode } from '@/styles/themes';
 import { EnvConfigType, isWebAppPlatform } from '@/services/environment';
@@ -191,5 +191,20 @@ export const initSystemThemeListener = (appService: AppService) => {
   mediaQuery?.addEventListener('change', updateColorTheme);
   document.addEventListener('visibilitychange', updateColorTheme);
   window.addEventListener('resize', updateWindowTheme);
+
+  // iOS WKWebView's `prefers-color-scheme` change event is unreliable when the
+  // system theme is toggled while the app is in the foreground (e.g. Control
+  // Center). Subscribe to the native UITraitCollection-driven push so the
+  // store reflects the new system theme immediately.
+  if (appService.isIOSApp) {
+    subscribeNativeColorScheme((colorScheme) => {
+      const systemIsDarkMode = colorScheme === 'dark';
+      if (typeof window !== 'undefined' && localStorage) {
+        localStorage.setItem('systemIsDarkMode', systemIsDarkMode ? 'true' : 'false');
+      }
+      useThemeStore.getState().handleSystemThemeChange(systemIsDarkMode);
+    });
+  }
+
   updateColorTheme();
 };
