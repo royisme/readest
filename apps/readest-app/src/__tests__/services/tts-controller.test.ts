@@ -26,6 +26,15 @@ vi.mock('@/services/tts/NativeTTSClient', () => ({
   }),
 }));
 
+vi.mock('@/services/tts/RemoteTTSClient', () => ({
+  RemoteTTSClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    const c = createMockTTSClient('remote-tts');
+    // remote client opts out of init so it isn't pushed to availableClients
+    c.init = vi.fn().mockResolvedValue(false);
+    Object.assign(this, c);
+  }),
+}));
+
 vi.mock('@/services/tts/TTSUtils', () => ({
   TTSUtils: {
     getPreferredClient: vi.fn().mockReturnValue(null),
@@ -81,7 +90,7 @@ vi.mock('foliate-js/text-walker.js', () => ({
 function createMockTTSClient(name: string): TTSClient {
   return {
     name,
-    initialized: false,
+    initialized: true,
     init: vi.fn().mockResolvedValue(true),
     shutdown: vi.fn().mockResolvedValue(undefined),
     speak: vi.fn().mockImplementation(async function* (): AsyncGenerator<TTSMessageEvent> {
